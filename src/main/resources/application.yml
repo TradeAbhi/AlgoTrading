@@ -1,0 +1,48 @@
+# ============================================================
+# Add these to your existing application.yml
+# ============================================================
+
+watchlist:
+  # Items per category
+  top-gainers-limit:      20
+  top-losers-limit:       20
+  active-by-value-limit:  20
+  high-oi-limit:          20
+  volume-shocker-limit:   20
+  only-buyers-limit:      20
+  only-sellers-limit:     20
+
+  # Thresholds
+  volume-shocker-threshold:    3.0    # 3x avg volume = volume shocker
+  only-buyers-ratio-threshold: 5.0    # buyQty >= 5x sellQty
+  only-sellers-ratio-threshold: 5.0   # sellQty >= 5x buyQty
+
+  # Liquidity filters
+  min-traded-value-crores: 5.0        # ignore stocks trading < 5Cr today
+  min-open-interest:       100000     # ignore very low OI contracts
+
+  # Cache refresh interval (seconds) - how often to pull fresh data
+  cache-ttl-seconds: 60
+
+  # NSE_EQ for equities, NSE_FO for F&O
+  segment: NSE_EQ
+
+  # Optional: override the universe with specific instrument keys
+  # If empty, defaults to Nifty 100
+  # universe:
+  #   - "NSE_EQ|RELIANCE"
+  #   - "NSE_EQ|TCS"
+
+# Spring Cache (in-memory; replace with Redis for production)
+spring:
+  cache:
+    type: caffeine
+  caffeine:
+    spec: maximumSize=100,expireAfterWrite=65s
+
+# Telegram (already in your project - ensure these are set)
+telegram:
+  bot:
+    token: ${TELEGRAM_BOT_TOKEN}
+  chat:
+    id: ${TELEGRAM_CHAT_ID}

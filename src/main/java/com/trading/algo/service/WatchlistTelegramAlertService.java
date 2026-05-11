@@ -77,13 +77,13 @@ public class WatchlistTelegramAlertService {
         msg.append("\uD83D\uDCCA *Live Market Watchlist* | ").append(time).append("\n");
         msg.append("━━━━━━━━━━━━━━━━━━━━━\n\n");
 
-        appendCategory(msg, "\uD83D\uDCC8 *Top Gainers*",     watchlist.getTopGainers());
-        appendCategory(msg, "\uD83D\uDCC9 *Top Losers*",      watchlist.getTopLosers());
-        appendCategory(msg, "\uD83D\uDD25 *Volume Shockers*", watchlist.getVolumeShockers());
-        appendCategory(msg, "\uD83D\uDCB0 *Active by Value*", watchlist.getActiveByValue());
-        appendCategory(msg, "\uD83D\uDCCC *High OI*",         watchlist.getHighOiStocks());
-        appendCategory(msg, "\uD83D\uDFE2 *Only Buyers*",     watchlist.getOnlyBuyers());
-        appendCategory(msg, "\uD83D\uDD34 *Only Sellers*",    watchlist.getOnlySellers());
+        appendGainers (msg, watchlist.getTopGainers());
+        appendLosers  (msg, watchlist.getTopLosers());
+        appendShockers(msg, watchlist.getVolumeShockers());
+        appendByValue (msg, watchlist.getActiveByValue());
+        appendHighOi  (msg, watchlist.getHighOiStocks());
+        appendBuyers  (msg, watchlist.getOnlyBuyers());
+        appendSellers (msg, watchlist.getOnlySellers());
 
         msg.append("━━━━━━━━━━━━━━━━━━━━━\n");
         msg.append("_Scanned ").append(watchlist.getTotalSymbolsScanned()).append(" F&O stocks_");
@@ -91,16 +91,88 @@ public class WatchlistTelegramAlertService {
         return msg.toString();
     }
 
-    private void appendCategory(StringBuilder sb, String header, List<WatchlistItem> items) {
-        sb.append(header).append("\n");
-        if (items == null || items.isEmpty()) {
-            sb.append("_None_");
-        } else {
-            sb.append(items.stream()
-                    .map(WatchlistItem::getSymbol)
-                    .collect(Collectors.joining(", ")));
-        }
-        sb.append("\n\n");
+    // ── Per-category formatters ──────────────────────────────────────────────
+
+    /** 📈 Top Gainers — symbol + % change (green arrow) */
+    private void appendGainers(StringBuilder sb, List<WatchlistItem> items) {
+        sb.append("\uD83D\uDCC8 *Top Gainers*\n");
+        if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
+        items.forEach(i -> sb.append(String.format(
+                "`%-12s` \u25B2 %.2f%%\n", i.getSymbol(), i.getChangePercent())));
+        sb.append("\n");
+    }
+
+    /** 📉 Top Losers — symbol + % change (red arrow) */
+    private void appendLosers(StringBuilder sb, List<WatchlistItem> items) {
+        sb.append("\uD83D\uDCC9 *Top Losers*\n");
+        if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
+        items.forEach(i -> sb.append(String.format(
+                "`%-12s` \u25BC %.2f%%\n", i.getSymbol(), Math.abs(i.getChangePercent()))));
+        sb.append("\n");
+    }
+
+    /** 🔥 Volume Shockers — symbol + volume ratio + % change */
+    private void appendShockers(StringBuilder sb, List<WatchlistItem> items) {
+        sb.append("\uD83D\uDD25 *Volume Shockers*\n");
+        if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
+        items.forEach(i -> {
+            String chg = i.getChangePercent() >= 0
+                    ? String.format("\u25B2 %.2f%%", i.getChangePercent())
+                    : String.format("\u25BC %.2f%%", Math.abs(i.getChangePercent()));
+            sb.append(String.format("`%-12s` Vol: %.1fx | %s\n",
+                    i.getSymbol(), i.getVolumeRatio(), chg));
+        });
+        sb.append("\n");
+    }
+
+    /** 💰 Active by Value — symbol + traded value + % change */
+    private void appendByValue(StringBuilder sb, List<WatchlistItem> items) {
+        sb.append("\uD83D\uDCB0 *Active by Value*\n");
+        if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
+        items.forEach(i -> {
+            String chg = i.getChangePercent() >= 0
+                    ? String.format("\u25B2 %.2f%%", i.getChangePercent())
+                    : String.format("\u25BC %.2f%%", Math.abs(i.getChangePercent()));
+            sb.append(String.format("`%-12s` Val: %.1fCr | %s\n",
+                    i.getSymbol(), i.getTradedValue(), chg));
+        });
+        sb.append("\n");
+    }
+
+    /** 📌 High OI — symbol + OI change % + price % change */
+    private void appendHighOi(StringBuilder sb, List<WatchlistItem> items) {
+        sb.append("\uD83D\uDCCC *High OI*\n");
+        if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
+        items.forEach(i -> {
+            String chg = i.getChangePercent() >= 0
+                    ? String.format("\u25B2 %.2f%%", i.getChangePercent())
+                    : String.format("\u25BC %.2f%%", Math.abs(i.getChangePercent()));
+            sb.append(String.format("`%-12s` OI: %.1f%% | %s\n",
+                    i.getSymbol(), i.getOiChangePercent(), chg));
+        });
+        sb.append("\n");
+    }
+
+    /** 🟢 Only Buyers — symbol + buy/sell ratio + % change */
+    private void appendBuyers(StringBuilder sb, List<WatchlistItem> items) {
+        sb.append("\uD83D\uDFE2 *Only Buyers*\n");
+        if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
+        items.forEach(i -> sb.append(String.format(
+                "`%-12s` B/S: %.1fx | \u25B2 %.2f%%\n",
+                i.getSymbol(), i.getBuySelRatio(), i.getChangePercent())));
+        sb.append("\n");
+    }
+
+    /** 🔴 Only Sellers — symbol + sell/buy ratio + % change */
+    private void appendSellers(StringBuilder sb, List<WatchlistItem> items) {
+        sb.append("\uD83D\uDD34 *Only Sellers*\n");
+        if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
+        items.forEach(i -> {
+            double sbRatio = i.getBuySelRatio() > 0 ? 1.0 / i.getBuySelRatio() : 0;
+            sb.append(String.format("`%-12s` S/B: %.1fx | \u25BC %.2f%%\n",
+                    i.getSymbol(), sbRatio, Math.abs(i.getChangePercent())));
+        });
+        sb.append("\n");
     }
 
     // -------------------------------------------------------------------------

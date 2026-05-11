@@ -109,6 +109,31 @@ public class UpstoxInstrumentMasterService {
         return keys;
     }
 
+    /**
+     * Resolves symbols to a Map<symbol, instrumentKey> directly.
+     * SAFER than resolveToInstrumentKeys (List) — no index misalignment
+     * when some symbols are missing from the master.
+     */
+    public java.util.Map<String, String> resolveToInstrumentKeyMap(List<String> symbols) {
+        java.util.Map<String, String> result = new java.util.LinkedHashMap<>();
+        List<String> missed = new ArrayList<>();
+
+        for (String symbol : symbols) {
+            Optional<String> key = getInstrumentKey(symbol);
+            if (key.isPresent()) {
+                result.put(symbol, key.get());
+            } else {
+                missed.add(symbol);
+            }
+        }
+
+        if (!missed.isEmpty()) {
+            log.warn("Instrument master: {} symbols NOT found -> {}", missed.size(), missed);
+        }
+        log.info("Resolved {}/{} symbols to instrument keys", result.size(), symbols.size());
+        return result;
+    }
+
     /** Total symbols loaded in master */
     public int getMasterSize() {
         return symbolToKeyMap.size();

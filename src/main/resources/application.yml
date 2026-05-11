@@ -1,46 +1,54 @@
 # ============================================================
-# Add these to your existing application.yml
+# Trading Bot Configuration - ORB & Watchlist Modules
 # ============================================================
 
+orb:
+  instruments-csv-path: classpath:ind_nifty500list.csv
+
+backtest:
+  requests-per-second: 20
+  thread-pool-size: 10
+  max-c2-range-percent: 1.41  # Tighten to 1.0 for stricter narrow-range filter
+  fixed-risk-rupees: 10000
+  sl-margin-percent: 0.45
+
 watchlist:
-  # Items per category
-  top-gainers-limit:      20
-  top-losers-limit:       20
-  active-by-value-limit:  20
-  high-oi-limit:          20
-  volume-shocker-limit:   20
-  only-buyers-limit:      20
-  only-sellers-limit:     20
+  # Limits per category
+  top-gainers-limit: 20
+  top-losers-limit: 20
+  active-by-value-limit: 20
+  high-oi-limit: 20
+  volume-shocker-limit: 20
+  only-buyers-limit: 20
+  only-sellers-limit: 20
 
-  # Thresholds
-  volume-shocker-threshold:    3.0    # 3x avg volume = volume shocker
-  only-buyers-ratio-threshold: 5.0    # buyQty >= 5x sellQty
-  only-sellers-ratio-threshold: 5.0   # sellQty >= 5x buyQty
+  # Thresholds and Logic
+  volume-shocker-threshold: 3.0    # 3x avg volume = shocker
+  only-buyers-ratio-threshold: 5.0 # buyQty >= 5x sellQty
+  only-sellers-ratio-threshold: 5.0 # sellQty >= 5x buyQty
 
-  # Liquidity filters
-  min-traded-value-crores: 5.0        # ignore stocks trading < 5Cr today
-  min-open-interest:       100000     # ignore very low OI contracts
-
-  # Cache refresh interval (seconds) - how often to pull fresh data
+  # Liquidity Filters
+  min-traded-value-crores: 5.0
+  min-open-interest: 100000
   cache-ttl-seconds: 60
-
-  # NSE_EQ for equities, NSE_FO for F&O
   segment: NSE_EQ
 
-  # Optional: override the universe with specific instrument keys
-  # If empty, defaults to Nifty 100
-  # universe:
-  #   - "NSE_EQ|RELIANCE"
-  #   - "NSE_EQ|TCS"
-
-# Spring Cache (in-memory; replace with Redis for production)
+# Spring Framework Infrastructure
 spring:
   cache:
     type: caffeine
+    cache-names: 
+      - instruments
+      - quotes
   caffeine:
-    spec: maximumSize=100,expireAfterWrite=65s
+    spec: maximumSize=500,expireAfterWrite=65s
+    
+  task:
+    scheduling:
+      pool:
+        size: 5  # Shared pool for ORB and existing schedulers
 
-# Telegram (already in your project - ensure these are set)
+# External Integrations
 telegram:
   bot:
     token: ${TELEGRAM_BOT_TOKEN}

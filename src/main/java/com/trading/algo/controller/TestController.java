@@ -2,9 +2,12 @@ package com.trading.algo.controller;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -45,6 +48,12 @@ private final GlobalMarketService globalMarketService;
 //    public String handleCallback(@RequestParam String code) {
 //        return code;
 //    }
+
+@PostMapping("/api/earnings/refresh")
+public ResponseEntity<Map<String, String>> refreshEarnings() {
+    earningsService.fetchAndStoreData();
+    return ResponseEntity.ok(Map.of("status", "Earnings table refreshed from NSE"));
+}
 
 @GetMapping("/test/global")
 public String testGlobal() {

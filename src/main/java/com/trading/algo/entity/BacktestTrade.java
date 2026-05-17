@@ -76,15 +76,35 @@ public class BacktestTrade {
      *   quantity = floor(fixedRiskRupees / riskPoints)
      *   e.g. risk=10pts, fixedRisk=₹10000 → qty=1000 shares
      */
-    private int    quantity;
+    @Column(name = "quantity", columnDefinition = "INT DEFAULT 0")
+    private Integer quantity = 0;
 
     /** Actual risk in rupees = quantity × riskPoints (≈ fixedRiskRupees, may vary due to floor) */
-    @Column(name = "risk_rupees")
-    private double riskRupees;
+    @Column(name = "risk_rupees", columnDefinition = "DECIMAL(10,2) DEFAULT 0")
+    private Double riskRupees = 0.0;
 
     /** Actual P&L in rupees = pnlPoints × quantity */
-    @Column(name = "pnl_rupees")
-    private double pnlRupees;
+    @Column(name = "pnl_rupees", columnDefinition = "DECIMAL(10,2) DEFAULT 0")
+    private Double pnlRupees = 0.0;
+
+    /**
+     * POINT 2 — Volume flag.
+     * True if C1 volume >= 1.5× C2 volume (proxy for strong opening volume).
+     * Full 5-day avg volume check not possible in backtest without extra API calls.
+     * Instead: C1 volume vs C2 volume ratio is a good intraday proxy.
+     * Flagged in Telegram alert with 🔥 if true.
+     */
+    /**
+     * True if C1 volume >= 1.5× C2 volume — strong opening participation.
+     * Used as an informational flag in Telegram (🔥), NOT a trade filter.
+     * All setups are valid regardless; this just highlights high-volume ones.
+     */
+    @Column(name = "volume_flag")
+    private Boolean volumeFlag = false;
+
+    /** C1 candle volume — used to compute volumeFlag */
+    @Column(name = "c1_volume")
+    private Long c1Volume;
 
     @Column(name = "exit_candle_time")
     private LocalDateTime exitCandleTime;
@@ -97,9 +117,10 @@ public class BacktestTrade {
     public enum Direction { BUY, SELL }
 
     public enum Outcome {
-        TARGET_HIT,   // price reached 2.5× target
-        SL_HIT,       // price hit stop loss
-        EOD_EXIT,     // neither hit by 3:20 PM — exit at market
-        OPEN          // backtest not yet resolved (shouldn't persist)
+        TARGET_HIT,     // price reached 2.5R target
+        SL_HIT,         // price hit original SL (before 1.5R)
+        BREAKEVEN_EXIT, // 1.5R hit → SL moved to breakeven → stopped out at entry (zero loss)
+        EOD_EXIT,       // neither hit by 3:15 PM — exit at market
+        OPEN            // backtest not yet resolved (shouldn't persist)
     }
 }

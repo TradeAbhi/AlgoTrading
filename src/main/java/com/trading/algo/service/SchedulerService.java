@@ -1,20 +1,22 @@
 package com.trading.algo.service;
 
+
 import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.trading.algo.earning.EarningsService;
+import com.trading.algo.earning.EarningsWatchlistDiffService;
 import com.trading.algo.entity.Earnings;
 import com.trading.algo.entity.EarningsWatchlist;
 import com.trading.algo.entity.EarningsWatchlist.WatchPhase;
+import com.trading.algo.fibostrategy.LiveStrategyAlertService;
+import com.trading.algo.ipo.IpoRepository;
 import com.trading.algo.repo.EarningsRepository;
 import com.trading.algo.repo.EarningsWatchlistRepository;
-import com.trading.algo.service.LiveStrategyAlertService;
-import com.trading.algo.service.NseWeekHighService;
-import com.trading.algo.repo.IpoRepository;
-import com.trading.algo.service.EarningsWatchlistDiffService;
+import com.trading.algo.telegram.TelegramService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +35,8 @@ public class SchedulerService {
     private final EarningsWatchlistDiffService diffService;  // ← NEW
     private final LiveStrategyAlertService     liveStrategyAlertService;
     private final NseWeekHighService           nseWeekHighService;
+    private final MarketSentimentService       marketSentimentService;
+    private final IpoMonitorService            ipoMonitorService;
 
     // =========================================================================
     // EARNINGS — fetch & save (DO NOT TOUCH)
@@ -266,6 +270,45 @@ public class SchedulerService {
     }
 
     // =========================================================================
+    // Advance / Decline Ratio — every 5 min from 9:15 to 9:45, then every 15 min till 3:30
+    // =========================================================================
+
+    /**
+     * Every 5 minutes from 9:15 to 9:45 — early market breadth monitoring.
+     * Fires at: 9:15, 9:20, 9:25, 9:30, 9:35, 9:40, 9:45
+     * Cron: every 5 min within the 9:15–9:45 window on weekdays.
+     */
+    @Scheduled(cron = "0 15/5 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void adRatioEvery5Min() {
+        java.time.LocalTime now = java.time.LocalTime.now();
+        // Only fire between 9:15 and 9:45 (inclusive)
+        if (now.isBefore(java.time.LocalTime.of(9, 15)) ||
+            now.isAfter(java.time.LocalTime.of(9, 46))) return;
+
+        log.info("A/D Ratio 5-min trigger at {}", now);
+        marketSentimentService.sendAdvanceDeclineAlert();
+    }
+
+    /**
+     * Every 15 minutes from 9:45 to 3:30 PM — regular market breadth monitoring.
+     * Fires at: 9:45, 10:00, 10:15, ..., 15:15, 15:30
+     */
+    @Scheduled(cron = "0 45/15 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void adRatioEvery15MinMorning() {
+        log.info("A/D Ratio 15-min trigger (morning) at {}", java.time.LocalTime.now());
+        marketSentimentService.sendAdvanceDeclineAlert();
+    }
+
+    @Scheduled(cron = "0 0/15 10-15 * * MON-FRI", zone = "Asia/Kolkata")
+    public void adRatioEvery15Min() {
+        java.time.LocalTime now = java.time.LocalTime.now();
+        // Stop at 3:30 PM
+        if (now.isAfter(java.time.LocalTime.of(15, 31))) return;
+        log.info("A/D Ratio 15-min trigger at {}", now);
+        marketSentimentService.sendAdvanceDeclineAlert();
+    }
+
+    // =========================================================================
     // 52-week high / low — daily at 3:35 PM after market close
     // =========================================================================
 
@@ -283,30 +326,27 @@ public class SchedulerService {
     // IPO — completely unchanged
     // =========================================================================
 
+    // ── 9:00 AM — sync IPOs + 10-day / open day alerts (unchanged) ──────────
     @Scheduled(cron = "0 0 9 * * *")
     public void ipoAlertScheduler() {
-
         LocalDate today = LocalDate.now();
 
-        // 🔔 10 days before listing
-        List<com.trading.algo.entity.Ipo> upcoming = ipoRepo.findByListingDateBetween(
-                today.plusDays(10), today.plusDays(10)
-        );
-        for (com.trading.algo.entity.Ipo ipo : upcoming) {
+        // 10 days before listing
+        List<com.trading.algo.ipo.Ipo> upcoming = ipoRepo.findByListingDateBetween(
+                today.plusDays(10), today.plusDays(10));
+        for (com.trading.algo.ipo.Ipo ipo : upcoming) {
             if (!ipo.isAlert10DaySent()) {
                 telegramService.sendMessage(
-                        "📅 IPO Listing Soon (10 Days)\n" +
-                        ipo.getName() +
-                        "\nListing: " + ipo.getListingDate()
-                );
+                    "📅 IPO Listing Soon (10 Days)\n" + ipo.getName() +
+                    "\nListing: " + ipo.getListingDate());
                 ipo.setAlert10DaySent(true);
                 ipoRepo.save(ipo);
             }
         }
 
-        // 🚀 IPO OPEN
-        List<com.trading.algo.entity.Ipo> opening = ipoRepo.findByOpenDate(today);
-        for (com.trading.algo.entity.Ipo ipo : opening) {
+        // IPO open day
+        List<com.trading.algo.ipo.Ipo> opening = ipoRepo.findByOpenDate(today);
+        for (com.trading.algo.ipo.Ipo ipo : opening) {
             if (!ipo.isAlertOpenSent()) {
                 telegramService.sendMessage("🚀 IPO OPEN TODAY\n" + ipo.getName());
                 ipo.setAlertOpenSent(true);
@@ -314,15 +354,29 @@ public class SchedulerService {
             }
         }
 
-        // 📈 LISTING DAY
-        List<com.trading.algo.entity.Ipo> listing = ipoRepo.findByListingDate(today);
-        for (com.trading.algo.entity.Ipo ipo : listing) {
+        // Listing day — basic alert
+        List<com.trading.algo.ipo.Ipo> listing = ipoRepo.findByListingDate(today);
+        for (com.trading.algo.ipo.Ipo ipo : listing) {
             if (!ipo.isAlertListingSent()) {
                 telegramService.sendMessage("📈 IPO LISTING TODAY\n" + ipo.getName());
                 ipo.setAlertListingSent(true);
                 ipoRepo.save(ipo);
             }
         }
+    }
+
+    // ── 9:30 AM — listing open performance (price vs issue price) ───────────
+    @Scheduled(cron = "0 30 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void ipoListingOpenAlert() {
+        log.info("IPO listing open alert — 9:30 AM");
+        ipoMonitorService.sendListingOpenAlert();
+    }
+
+    // ── 3:35 PM — listing EOD performance (full OHLC vs issue price) ────────
+    @Scheduled(cron = "0 35 15 * * MON-FRI", zone = "Asia/Kolkata")
+    public void ipoListingEodAlert() {
+        log.info("IPO listing EOD alert — 3:35 PM");
+        ipoMonitorService.sendListingEodAlert();
     }
 
     @Scheduled(cron = "0 0 8 * * *")

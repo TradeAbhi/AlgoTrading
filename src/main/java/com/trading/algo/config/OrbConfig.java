@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "orb")
 public class OrbConfig {
 
-    private String instrumentsCsvPath = "classpath:ind_nifty500list.csv";
+    private String instrumentsCsvPath = "classpath:ind_nifty200list.csv";
     private Map<String, String> keyToSymbolMap = new LinkedHashMap<>();
 
     public String getInstrumentsCsvPath() {

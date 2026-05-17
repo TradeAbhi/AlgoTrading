@@ -9,6 +9,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import com.trading.algo.config.WatchlistConfig;
+import com.trading.algo.upstox.UpstoxInstrumentMasterService;
 
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;

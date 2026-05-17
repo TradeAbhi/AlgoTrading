@@ -24,7 +24,7 @@ public class BacktestConfig {
      * Minimum wick ratio (body / range) for C1 to qualify as a strong candle.
      * 0.75 = body must be at least 75% of total range (small wicks).
      */
-    private double minWickRatio = 0.75;
+    private double minWickRatio = 0.65;
 
     /**
      * C2 must trade past this fraction of C1's body to confirm the setup.

@@ -1,4 +1,4 @@
-gitpackage com.trading.algo;
+package com.trading.algo;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

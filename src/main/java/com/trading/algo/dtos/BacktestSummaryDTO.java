@@ -30,6 +30,8 @@ public class BacktestSummaryDTO {
     private double avgWinPoints;
     private double avgLossPoints;
     private double avgRR;            // average actual risk:reward on closed trades
+    private int    totalBreakevenExits;  // stopped at breakeven after 1.5R hit (Point 7)
+    private int    totalHighVolumeSignals;     // C1 volume >= 1.5× C2 volume 🔥 (Point 2)
     private double totalPnlPoints;
     private double totalPnlRupees;    // sum of pnlRupees (qty x pnlPoints) — stocks only
     private double avgRiskRupees;     // average actual risk per trade in rupees

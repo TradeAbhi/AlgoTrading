@@ -21,7 +21,9 @@ public class Ipo {
     private Long id;
 
     private String name;
-    private String symbol;         // NSE symbol — populated after listing
+    private String symbol;         // NSE symbol — from CSV or resolved from instrument master
+    private String securityType;   // EQ / SME / BE / IV — from NSE CSV
+    private String priceRange;     // e.g. "Rs.162 to Rs.171" — from NSE CSV
 
     private LocalDate openDate;
     private LocalDate closeDate;

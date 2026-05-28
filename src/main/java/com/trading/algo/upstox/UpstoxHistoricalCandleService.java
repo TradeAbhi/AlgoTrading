@@ -47,6 +47,9 @@ public class UpstoxHistoricalCandleService {
     private static final String INTRADAY_URL  =
             "https://api.upstox.com/v3/historical-candle/intraday/%s/minutes/15";
 
+    private static final String WEEKLY_URL =
+            "https://api.upstox.com/v3/historical-candle/%s/weeks/1/%s/%s";
+
     private static final DateTimeFormatter DATE_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
@@ -118,6 +121,41 @@ public class UpstoxHistoricalCandleService {
             return Collections.emptyList();
         } catch (Exception e) {
             log.error("Failed to fetch candles for {} on {}: {}", instrumentKey, date, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    public List<Candle> fetchWeeklyCandles(String instrumentKey, LocalDate fromDate, LocalDate toDate) {
+        String encodedKey = instrumentKey.replace("|", "%7C").replace(" ", "%20");
+        String rawUrl = String.format(WEEKLY_URL, encodedKey, toDate.format(DATE_FMT), fromDate.format(DATE_FMT));
+
+        java.net.URI uri;
+        try {
+            uri = org.springframework.web.util.UriComponentsBuilder
+                    .fromUriString(rawUrl)
+                    .build(true)
+                    .toUri();
+        } catch (Exception e) {
+            log.error("Failed to build weekly URI for {}: {}", instrumentKey, e.getMessage());
+            return Collections.emptyList();
+        }
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(upstoxTokenService.getAccessToken());
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+
+            ResponseEntity<String> response = restTemplate.exchange(
+                    uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                log.warn("Upstox weekly API returned {} for {}", response.getStatusCode(), instrumentKey);
+                return Collections.emptyList();
+            }
+
+            return parseCandles(response.getBody(), instrumentKey, toDate);
+        } catch (Exception e) {
+            log.error("Failed to fetch weekly candles for {}: {}", instrumentKey, e.getMessage());
             return Collections.emptyList();
         }
     }

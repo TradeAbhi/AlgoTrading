@@ -55,6 +55,13 @@ public class WeeklyBreakoutScannerService {
     private static final double MIN_WEEKLY_RANGE_PCT  = 1.5;
     private static final double MAX_WEEKLY_RANGE_PCT  = 8.0;
     private static final double MIN_VOLUME_MULTIPLIER = 1.5;
+    private static final double MIN_QUALITY_VOLUME_MULTIPLIER = 2.0;
+    private static final double MIN_CLOSE_PRICE = 100.0;
+    private static final double MIN_TURNOVER_CRORES = 20.0;
+    private static final double MIN_BUY_CLOSE_LOCATION = 0.65;
+    private static final double MAX_SELL_CLOSE_LOCATION = 0.35;
+    private static final double MIN_INTRADAY_MOVE_PCT = 0.8;
+    private static final double MAX_INTRADAY_MOVE_PCT = 12.0;
 
     // ── Timing ───────────────────────────────────────────────────────────────
     private static final LocalTime SEED_FROM  = LocalTime.of(9, 31);
@@ -185,6 +192,7 @@ public class WeeklyBreakoutScannerService {
                 if (dailyCandles == null || dailyCandles.isEmpty()) continue;
 
                 List<Object> today = dailyCandles.get(0);
+                double dOpen   = toDouble(today.get(1));
                 double dHigh   = toDouble(today.get(2));
                 double dLow    = toDouble(today.get(3));
                 double dClose  = toDouble(today.get(4));
@@ -197,10 +205,12 @@ public class WeeklyBreakoutScannerService {
                         // ── Filter 2: Volume confirmation ─────────────────────
                         long avgWeeklyVol = state.getWeeklyVolume() / 5; // approx daily avg
                         if (dVolume >= (long)(avgWeeklyVol * MIN_VOLUME_MULTIPLIER)) {
-                            state.setWeeklyLow(state.getPrevDailyLow());
-                            sendBuyAlert(state, dClose, dHigh, dLow, dVolume);
-                            state.setBuyAlerted(true);
-                            buyFired++;
+                            if (isQualityVolumeMove(symbol, true, dOpen, dHigh, dLow, dClose, dVolume, avgWeeklyVol)) {
+                                state.setWeeklyLow(state.getPrevDailyLow());
+                                sendBuyAlert(state, dClose, dHigh, dLow, dVolume);
+                                state.setBuyAlerted(true);
+                                buyFired++;
+                            }
                         } else {
                             log.debug("[WEEKLY] {} BUY skipped — low volume ({} < {}x avg {})",
                                 symbol, dVolume, MIN_VOLUME_MULTIPLIER, avgWeeklyVol);
@@ -221,10 +231,12 @@ public class WeeklyBreakoutScannerService {
                     if (dClose < state.getWeeklyLow()) {
                         long avgWeeklyVol = state.getWeeklyVolume() / 5;
                         if (dVolume >= (long)(avgWeeklyVol * MIN_VOLUME_MULTIPLIER)) {
-                            state.setWeeklyHigh(state.getPrevDailyHigh());
-                            sendSellAlert(state, dClose, dHigh, dLow, dVolume);
-                            state.setSellAlerted(true);
-                            sellFired++;
+                            if (isQualityVolumeMove(symbol, false, dOpen, dHigh, dLow, dClose, dVolume, avgWeeklyVol)) {
+                                state.setWeeklyHigh(state.getPrevDailyHigh());
+                                sendSellAlert(state, dClose, dHigh, dLow, dVolume);
+                                state.setSellAlerted(true);
+                                sellFired++;
+                            }
                         } else {
                             log.debug("[WEEKLY] {} SELL skipped — low volume ({} < {}x avg {})",
                                 symbol, dVolume, MIN_VOLUME_MULTIPLIER, avgWeeklyVol);
@@ -253,6 +265,67 @@ public class WeeklyBreakoutScannerService {
     // ── Manual triggers ───────────────────────────────────────────────────────
     public void triggerManualSeed() { seedPreviousWeekRange(); }
     public void triggerManualScan() { scanDailyClose(); }
+
+    private boolean isQualityVolumeMove(String symbol,
+                                        boolean buySide,
+                                        double open,
+                                        double high,
+                                        double low,
+                                        double close,
+                                        long volume,
+                                        long avgDailyVolume) {
+        if (close < MIN_CLOSE_PRICE) {
+            log.debug("[WEEKLY] {} skipped - price below quality filter: {}", symbol, close);
+            return false;
+        }
+
+        double turnoverCrores = (close * volume) / 1_00_00_000.0;
+        if (turnoverCrores < MIN_TURNOVER_CRORES) {
+            log.debug("[WEEKLY] {} skipped - turnover {}Cr < {}Cr",
+                    symbol, String.format("%.2f", turnoverCrores), MIN_TURNOVER_CRORES);
+            return false;
+        }
+
+        double volumeMultiplier = avgDailyVolume > 0 ? (double) volume / avgDailyVolume : 0;
+        if (volumeMultiplier < MIN_QUALITY_VOLUME_MULTIPLIER) {
+            log.debug("[WEEKLY] {} skipped - volume multiplier {}x < {}x",
+                    symbol, String.format("%.2f", volumeMultiplier), MIN_QUALITY_VOLUME_MULTIPLIER);
+            return false;
+        }
+
+        double dayRange = high - low;
+        if (dayRange <= 0 || open <= 0) {
+            log.debug("[WEEKLY] {} skipped - invalid day range/open", symbol);
+            return false;
+        }
+
+        double closeLocation = (close - low) / dayRange;
+        double moveFromOpenPct = ((close - open) / open) * 100.0;
+        double absMoveFromOpenPct = Math.abs(moveFromOpenPct);
+
+        if (absMoveFromOpenPct < MIN_INTRADAY_MOVE_PCT || absMoveFromOpenPct > MAX_INTRADAY_MOVE_PCT) {
+            log.debug("[WEEKLY] {} skipped - move from open {}% outside {}-{}%",
+                    symbol, String.format("%.2f", absMoveFromOpenPct),
+                    MIN_INTRADAY_MOVE_PCT, MAX_INTRADAY_MOVE_PCT);
+            return false;
+        }
+
+        if (buySide) {
+            boolean strongClose = close > open && closeLocation >= MIN_BUY_CLOSE_LOCATION;
+            if (!strongClose) {
+                log.debug("[WEEKLY] {} BUY skipped - weak candle close location {}", symbol,
+                        String.format("%.2f", closeLocation));
+            }
+            return strongClose;
+        }
+
+        boolean weakClose = close < open && closeLocation <= MAX_SELL_CLOSE_LOCATION;
+        if (!weakClose) {
+            log.debug("[WEEKLY] {} SELL skipped - weak downside close location {}", symbol,
+                    String.format("%.2f", closeLocation));
+        }
+        return weakClose;
+    }
 
     // ── Telegram alert builders ───────────────────────────────────────────────
     private void sendBuyAlert(WeeklyBreakoutState state, double close,

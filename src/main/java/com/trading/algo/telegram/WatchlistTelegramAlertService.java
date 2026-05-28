@@ -3,13 +3,19 @@ package com.trading.algo.telegram;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import com.trading.algo.dtos.WatchlistCategory;
 import com.trading.algo.dtos.WatchlistItem;
 import com.trading.algo.dtos.WatchlistResponse;
 import com.trading.algo.momentum.WatchlistService;
@@ -34,6 +40,8 @@ public class WatchlistTelegramAlertService {
 
     private final WatchlistService watchlistService;
     private final RestTemplate restTemplate;
+    private final Object snapshotLock = new Object();
+    private Map<WatchlistCategory, Set<String>> previousCategorySymbols = Collections.emptyMap();
 
     // -------------------------------------------------------------------------
     // Scheduled: every 15 min during market hours (auto)
@@ -71,108 +79,157 @@ public class WatchlistTelegramAlertService {
     // -------------------------------------------------------------------------
 
     private String buildMessage(WatchlistResponse watchlist) {
+        synchronized (snapshotLock) {
         String time = watchlist.getGeneratedAt().toLocalTime().format(TIME_FMT);
+        Map<WatchlistCategory, Set<String>> previous = previousCategorySymbols;
+        Map<WatchlistCategory, Set<String>> current = currentCategorySymbols(watchlist);
 
         StringBuilder msg = new StringBuilder();
         msg.append("\uD83D\uDCCA *Live Market Watchlist* | ").append(time).append("\n");
         msg.append("━━━━━━━━━━━━━━━━━━━━━\n\n");
 
-        appendGainers (msg, watchlist.getTopGainers());
-        appendLosers  (msg, watchlist.getTopLosers());
-        appendShockers(msg, watchlist.getVolumeShockers());
-        appendByValue (msg, watchlist.getActiveByValue());
-        appendHighOi  (msg, watchlist.getHighOiStocks());
-        appendBuyers  (msg, watchlist.getOnlyBuyers());
-        appendSellers (msg, watchlist.getOnlySellers());
+        appendGainers (msg, watchlist.getTopGainers(), previous);
+        appendLosers  (msg, watchlist.getTopLosers(), previous);
+        appendShockers(msg, watchlist.getVolumeShockers(), previous);
+        appendByValue (msg, watchlist.getActiveByValue(), previous);
+        appendHighOi  (msg, watchlist.getHighOiStocks(), previous);
+        appendBuyers  (msg, watchlist.getOnlyBuyers(), previous);
+        appendSellers (msg, watchlist.getOnlySellers(), previous);
 
         msg.append("━━━━━━━━━━━━━━━━━━━━━\n");
         msg.append("_Scanned ").append(watchlist.getTotalSymbolsScanned()).append(" F&O stocks_");
 
+        previousCategorySymbols = current;
         return msg.toString();
+        }
     }
 
     // ── Per-category formatters ──────────────────────────────────────────────
 
     /** 📈 Top Gainers — symbol + % change (green arrow) */
-    private void appendGainers(StringBuilder sb, List<WatchlistItem> items) {
+    private void appendGainers(StringBuilder sb, List<WatchlistItem> items,
+                               Map<WatchlistCategory, Set<String>> previous) {
         sb.append("\uD83D\uDCC8 *Top Gainers*\n");
         if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
         items.forEach(i -> sb.append(String.format(
-                "`%-12s` \u25B2 %.2f%%\n", i.getSymbol(), i.getChangePercent())));
+                "`%-12s` \u25B2 %.2f%%%s\n",
+                i.getSymbol(), i.getChangePercent(), newMarker(WatchlistCategory.TOP_GAINER, i, previous))));
         sb.append("\n");
     }
 
     /** 📉 Top Losers — symbol + % change (red arrow) */
-    private void appendLosers(StringBuilder sb, List<WatchlistItem> items) {
+    private void appendLosers(StringBuilder sb, List<WatchlistItem> items,
+                              Map<WatchlistCategory, Set<String>> previous) {
         sb.append("\uD83D\uDCC9 *Top Losers*\n");
         if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
         items.forEach(i -> sb.append(String.format(
-                "`%-12s` \u25BC %.2f%%\n", i.getSymbol(), Math.abs(i.getChangePercent()))));
+                "`%-12s` \u25BC %.2f%%%s\n",
+                i.getSymbol(), Math.abs(i.getChangePercent()), newMarker(WatchlistCategory.TOP_LOSER, i, previous))));
         sb.append("\n");
     }
 
     /** 🔥 Volume Shockers — symbol + volume ratio + % change */
-    private void appendShockers(StringBuilder sb, List<WatchlistItem> items) {
+    private void appendShockers(StringBuilder sb, List<WatchlistItem> items,
+                                Map<WatchlistCategory, Set<String>> previous) {
         sb.append("\uD83D\uDD25 *Volume Shockers*\n");
         if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
         items.forEach(i -> {
             String chg = i.getChangePercent() >= 0
                     ? String.format("\u25B2 %.2f%%", i.getChangePercent())
                     : String.format("\u25BC %.2f%%", Math.abs(i.getChangePercent()));
-            sb.append(String.format("`%-12s` Vol: %.1fx | %s\n",
-                    i.getSymbol(), i.getVolumeRatio(), chg));
+            sb.append(String.format("`%-12s` Vol: %.1fx | %s%s\n",
+                    i.getSymbol(), i.getVolumeRatio(), chg,
+                    newMarker(WatchlistCategory.VOLUME_SHOCKER, i, previous)));
         });
         sb.append("\n");
     }
 
     /** 💰 Active by Value — symbol + traded value + % change */
-    private void appendByValue(StringBuilder sb, List<WatchlistItem> items) {
+    private void appendByValue(StringBuilder sb, List<WatchlistItem> items,
+                               Map<WatchlistCategory, Set<String>> previous) {
         sb.append("\uD83D\uDCB0 *Active by Value*\n");
         if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
         items.forEach(i -> {
             String chg = i.getChangePercent() >= 0
                     ? String.format("\u25B2 %.2f%%", i.getChangePercent())
                     : String.format("\u25BC %.2f%%", Math.abs(i.getChangePercent()));
-            sb.append(String.format("`%-12s` Val: %.1fCr | %s\n",
-                    i.getSymbol(), i.getTradedValue(), chg));
+            sb.append(String.format("`%-12s` Val: %.1fCr | %s%s\n",
+                    i.getSymbol(), i.getTradedValue(), chg,
+                    newMarker(WatchlistCategory.ACTIVE_BY_VALUE, i, previous)));
         });
         sb.append("\n");
     }
 
     /** 📌 High OI — symbol + OI change % + price % change */
-    private void appendHighOi(StringBuilder sb, List<WatchlistItem> items) {
+    private void appendHighOi(StringBuilder sb, List<WatchlistItem> items,
+                              Map<WatchlistCategory, Set<String>> previous) {
         sb.append("\uD83D\uDCCC *High OI*\n");
         if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
         items.forEach(i -> {
             String chg = i.getChangePercent() >= 0
                     ? String.format("\u25B2 %.2f%%", i.getChangePercent())
                     : String.format("\u25BC %.2f%%", Math.abs(i.getChangePercent()));
-            sb.append(String.format("`%-12s` OI: %.1f%% | %s\n",
-                    i.getSymbol(), i.getOiChangePercent(), chg));
+            sb.append(String.format("`%-12s` OI: %.1f%% | %s%s\n",
+                    i.getSymbol(), i.getOiChangePercent(), chg,
+                    newMarker(WatchlistCategory.HIGH_OI, i, previous)));
         });
         sb.append("\n");
     }
 
     /** 🟢 Only Buyers — symbol + buy/sell ratio + % change */
-    private void appendBuyers(StringBuilder sb, List<WatchlistItem> items) {
+    private void appendBuyers(StringBuilder sb, List<WatchlistItem> items,
+                              Map<WatchlistCategory, Set<String>> previous) {
         sb.append("\uD83D\uDFE2 *Only Buyers*\n");
         if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
         items.forEach(i -> sb.append(String.format(
-                "`%-12s` B/S: %.1fx | \u25B2 %.2f%%\n",
-                i.getSymbol(), i.getBuySelRatio(), i.getChangePercent())));
+                "`%-12s` B/S: %.1fx | \u25B2 %.2f%%%s\n",
+                i.getSymbol(), i.getBuySelRatio(), i.getChangePercent(),
+                newMarker(WatchlistCategory.ONLY_BUYERS, i, previous))));
         sb.append("\n");
     }
 
     /** 🔴 Only Sellers — symbol + sell/buy ratio + % change */
-    private void appendSellers(StringBuilder sb, List<WatchlistItem> items) {
+    private void appendSellers(StringBuilder sb, List<WatchlistItem> items,
+                               Map<WatchlistCategory, Set<String>> previous) {
         sb.append("\uD83D\uDD34 *Only Sellers*\n");
         if (items == null || items.isEmpty()) { sb.append("_None_\n\n"); return; }
         items.forEach(i -> {
             double sbRatio = i.getBuySelRatio() > 0 ? 1.0 / i.getBuySelRatio() : 0;
-            sb.append(String.format("`%-12s` S/B: %.1fx | \u25BC %.2f%%\n",
-                    i.getSymbol(), sbRatio, Math.abs(i.getChangePercent())));
+            sb.append(String.format("`%-12s` S/B: %.1fx | \u25BC %.2f%%%s\n",
+                    i.getSymbol(), sbRatio, Math.abs(i.getChangePercent()),
+                    newMarker(WatchlistCategory.ONLY_SELLERS, i, previous)));
         });
         sb.append("\n");
+    }
+
+    private String newMarker(WatchlistCategory category, WatchlistItem item,
+                             Map<WatchlistCategory, Set<String>> previous) {
+        Set<String> previousSymbols = previous.get(category);
+        if (previousSymbols == null) {
+            return "";
+        }
+        return previousSymbols.contains(item.getSymbol()) ? "" : " *NEW*";
+    }
+
+    private Map<WatchlistCategory, Set<String>> currentCategorySymbols(WatchlistResponse watchlist) {
+        Map<WatchlistCategory, Set<String>> current = new EnumMap<>(WatchlistCategory.class);
+        current.put(WatchlistCategory.TOP_GAINER, symbols(watchlist.getTopGainers()));
+        current.put(WatchlistCategory.TOP_LOSER, symbols(watchlist.getTopLosers()));
+        current.put(WatchlistCategory.VOLUME_SHOCKER, symbols(watchlist.getVolumeShockers()));
+        current.put(WatchlistCategory.ACTIVE_BY_VALUE, symbols(watchlist.getActiveByValue()));
+        current.put(WatchlistCategory.HIGH_OI, symbols(watchlist.getHighOiStocks()));
+        current.put(WatchlistCategory.ONLY_BUYERS, symbols(watchlist.getOnlyBuyers()));
+        current.put(WatchlistCategory.ONLY_SELLERS, symbols(watchlist.getOnlySellers()));
+        return current;
+    }
+
+    private Set<String> symbols(List<WatchlistItem> items) {
+        if (items == null || items.isEmpty()) {
+            return Collections.emptySet();
+        }
+        return items.stream()
+                .map(WatchlistItem::getSymbol)
+                .collect(Collectors.toSet());
     }
 
     // -------------------------------------------------------------------------

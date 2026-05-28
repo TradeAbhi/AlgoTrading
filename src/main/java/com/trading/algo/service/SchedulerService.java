@@ -309,16 +309,16 @@ public class SchedulerService {
     }
 
     // =========================================================================
-    // 52-week high / low — daily at 3:35 PM after market close
+    // 52-week high / low - Friday at 4:00 PM after weekly close
     // =========================================================================
 
     /**
-     * Runs every weekday at 3:35 PM IST — 5 minutes after market close.
+     * Runs every Friday at 4:00 PM IST after the weekly candle is complete.
      * Fetches 52-week high and low stocks from NSE and sends CSV files to Telegram.
      */
-    @Scheduled(cron = "0 35 15 * * MON-FRI", zone = "Asia/Kolkata")
+    @Scheduled(cron = "0 0 16 * * FRI", zone = "Asia/Kolkata")
     public void weekHighLowAlert() {
-        log.info("52-week high/low scheduler fired — 3:35 PM");
+        log.info("52-week high/low scheduler fired - Friday 4:00 PM");
         nseWeekHighService.sendBothCsv();
     }
 

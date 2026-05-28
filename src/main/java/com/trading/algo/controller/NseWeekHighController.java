@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.trading.algo.service.NseWeekHighService;
+import com.trading.algo.service.WeekHighWeeklyCloseBreakoutService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +29,7 @@ import lombok.extern.slf4j.Slf4j;
 public class NseWeekHighController {
 
     private final NseWeekHighService nseWeekHighService;
+    private final WeekHighWeeklyCloseBreakoutService weekHighWeeklyCloseBreakoutService;
 
     /**
      * POST /api/nse/52-week-high
@@ -72,5 +74,11 @@ public class NseWeekHighController {
         log.info("POST /api/nse/52-week-both — manual trigger");
         nseWeekHighService.sendBothCsv();
         return ResponseEntity.ok(Map.of("status", "Both CSVs sent to Telegram"));
+    }
+    @PostMapping("/52-week-high/weekly-close-breakout")
+    public ResponseEntity<Map<String, String>> scanWeeklyCloseBreakout() {
+        log.info("POST /api/nse/52-week-high/weekly-close-breakout - manual trigger");
+        weekHighWeeklyCloseBreakoutService.scanAndAlert();
+        return ResponseEntity.ok(Map.of("status", "52-week high weekly close breakout scan complete"));
     }
 }

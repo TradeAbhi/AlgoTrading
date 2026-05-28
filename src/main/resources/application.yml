@@ -3,7 +3,7 @@
 # ============================================================
 
 orb:
-  instruments-csv-path: classpath:ind_nifty200list.csv
+  instruments-csv-path: classpath:ind_nifty500list.csv
 
 backtest:
   requests-per-second: 20

@@ -160,6 +160,45 @@ public class UpstoxHistoricalCandleService {
         }
     }
 
+    public List<Candle> fetchDailyCandles(String instrumentKey, LocalDate fromDate, LocalDate toDate) {
+        List<Candle> daily = new ArrayList<>();
+
+        for (LocalDate day = fromDate; !day.isAfter(toDate); day = day.plusDays(1)) {
+            if (day.getDayOfWeek() == java.time.DayOfWeek.SATURDAY ||
+                    day.getDayOfWeek() == java.time.DayOfWeek.SUNDAY) {
+                continue;
+            }
+
+            List<Candle> intraday = fetchDayCandles(instrumentKey, day);
+            if (intraday == null || intraday.isEmpty()) {
+                continue;
+            }
+            daily.add(toDailyCandle(intraday));
+        }
+
+        daily.sort(java.util.Comparator.comparing(Candle::getTimestamp));
+        return daily;
+    }
+
+    private Candle toDailyCandle(List<Candle> intraday) {
+        intraday.sort(java.util.Comparator.comparing(Candle::getTimestamp));
+
+        Candle first = intraday.get(0);
+        Candle last = intraday.get(intraday.size() - 1);
+        double high = intraday.stream().mapToDouble(Candle::getHigh).max().orElse(first.getHigh());
+        double low = intraday.stream().mapToDouble(Candle::getLow).min().orElse(first.getLow());
+        long volume = intraday.stream().mapToLong(Candle::getVolume).sum();
+
+        return Candle.builder()
+                .timestamp(first.getTimestamp())
+                .open(first.getOpen())
+                .high(high)
+                .low(low)
+                .close(last.getClose())
+                .volume(volume)
+                .build();
+    }
+
     // -------------------------------------------------------------------------
     // Parsing
     // -------------------------------------------------------------------------

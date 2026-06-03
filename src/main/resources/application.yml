@@ -11,7 +11,7 @@ backtest:
   max-c2-range-percent: 1.41  # Tighten to 1.0 for stricter narrow-range filter
   fixed-risk-rupees: 10000
   sl-margin-percent: 0.45
-#  min-wick-ratio: 0.65
+  # min-wick-ratio: 0.65
 
 watchlist:
   # Limits per category
@@ -34,24 +34,80 @@ watchlist:
   cache-ttl-seconds: 60
   segment: NSE_EQ
 
+# ============================================================
 # Spring Framework Infrastructure
+# ============================================================
+
 spring:
+  application:
+    name: AlgoTrading
+
   cache:
     type: caffeine
-    cache-names: 
+    cache-names:
       - instruments
       - quotes
+
   caffeine:
     spec: maximumSize=500,expireAfterWrite=65s
-    
+
   task:
     scheduling:
       pool:
         size: 5  # Shared pool for ORB and existing schedulers
 
+  # ===============================
+  # MYSQL CONFIG
+  # ===============================
+  datasource:
+    url: jdbc:mysql://localhost:3306/algotrading
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+    hikari:
+      maximum-pool-size: 10
+
+  # ===============================
+  # JPA / HIBERNATE
+  # ===============================
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        jdbc:
+          batch_size: 50
+          order_inserts: true
+          order_updates: true
+          batch_versioned_data: true
+
+# ============================================================
+# SERVER CONFIG
+# ============================================================
+
+server:
+  port: 8080
+
+# ============================================================
 # External Integrations
+# ============================================================
+
 telegram:
   bot:
     token: ${TELEGRAM_BOT_TOKEN}
   chat:
     id: ${TELEGRAM_CHAT_ID}
+
+# (Fallback values - NOT recommended for production)
+telegram.bot.token: 8271537265:AAGyYMTjdOELAcs2Iq4EvaT60f8-QvHH5v0
+telegram.chat.id: 780646088
+
+upstox:
+  access:
+    token: eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIyMDQ4NzUiLCJqdGkiOiI2OWNjY2JhMjQxZWU5NzdmYjA2MmRhMTAiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc3NTAyOTE1NCwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzc1MDgwODAwfQ.MPfAyFNOGVrf_SFSfbehiymF2ySvJu8GqD5Qt89dr6Y
+  api:
+    key: de32ef46-2d03-428c-903c-a82ebb8a7fc4
+    secret: 9eiwfmkz4e

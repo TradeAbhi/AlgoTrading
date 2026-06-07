@@ -1,0 +1,480 @@
+{
+  "info": {
+    "name": "AlgoTrading API Collection",
+    "description": "REST API endpoints for Weekly Breakouts, IPOs, and US Market trading strategies",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Weekly Breakouts (NSE)",
+      "item": [
+        {
+          "name": "Capture Weekly Range",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/weekly/capture",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["weekly", "capture"]
+            },
+            "description": "Seed previous week's high/low for all symbols. Equivalent to Monday 9:31 AM scheduler."
+          },
+          "response": []
+        },
+        {
+          "name": "Scan Daily Close",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/weekly/scan",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["weekly", "scan"]
+            },
+            "description": "Manually trigger one daily scan cycle. Equivalent to 3:31 PM scheduler. Sends alerts to Investment_picks_bot."
+          },
+          "response": []
+        },
+        {
+          "name": "View All States",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/weekly/state",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["weekly", "state"]
+            },
+            "description": "View current weekly breakout state for all seeded symbols. Shows weeklyHigh, weeklyLow, prevDailyLow/High, and alert flags."
+          },
+          "response": []
+        },
+        {
+          "name": "View Watching Symbols",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/weekly/watching",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["weekly", "watching"]
+            },
+            "description": "View only symbols still being watched (not yet alerted on both buy and sell sides)."
+          },
+          "response": []
+        },
+        {
+          "name": "View Alerted Symbols",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/weekly/alerted",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["weekly", "alerted"]
+            },
+            "description": "View symbols that have already triggered at least one side (buy or sell) this week."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "52-Week High/Low (NSE)",
+      "item": [
+        {
+          "name": "Send 52-Week Highs CSV",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/nse/52-week-high",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "nse", "52-week-high"]
+            },
+            "description": "Fetches today's 52-week high stocks from NSE and sends CSV to Telegram. Runs automatically at 3:35 PM Friday."
+          },
+          "response": []
+        },
+        {
+          "name": "Send 52-Week Lows CSV",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/nse/52-week-low",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "nse", "52-week-low"]
+            },
+            "description": "Fetches today's 52-week low stocks from NSE and sends CSV to Telegram."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Both CSVs (High & Low)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/nse/52-week-both",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "nse", "52-week-both"]
+            },
+            "description": "Sends both 52-week high and low CSVs to Telegram in one call."
+          },
+          "response": []
+        },
+        {
+          "name": "Scan Weekly Close Breakout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/nse/52-week-high/weekly-close-breakout",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "nse", "52-week-high", "weekly-close-breakout"]
+            },
+            "description": "Scans all NSE symbols for weekly close breakout (current weekly close > previous weekly high). Sends alerts to Investment_picks_bot."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload CSV and Scan",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/nse/upload-52-week",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "nse", "upload-52-week"]
+            },
+            "description": "Upload an NSE CSV (52-week highs format) and run weekly/daily filters against the uploaded symbols. Checks both weekly close breakout and daily breakout rules. Alerts go to Investment_picks_bot.\n\nUsage: curl -F \"file=@C:\\path\\to\\52_week_highs.csv\" http://localhost:8080/api/nse/upload-52-week"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Debug & Inspection",
+      "item": [
+        {
+          "name": "Debug Candles for Symbol",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/nse/debug-candles?symbol=ACUTAAS",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "nse", "debug-candles"],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "ACUTAAS",
+                  "description": "NSE symbol to inspect"
+                }
+              ]
+            },
+            "description": "Debug endpoint to fetch weekly and current-week daily candles for a symbol. Returns exact candle data used for breakout calculations. Replace ACUTAAS with any NSE symbol."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "IPOs",
+      "item": [
+        {
+          "name": "Sync IPOs from ipoalerts.in",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/ipo/sync",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "ipo", "sync"]
+            },
+            "description": "Sync latest IPOs from ipoalerts.in into the database. Runs automatically at 8:00 AM daily."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload IPO CSV",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/ipo/upload-csv",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "ipo", "upload-csv"]
+            },
+            "description": "Upload the NSE IPO CSV file — imports EQ-type IPOs only. Safe to re-upload same file (upsert by company name).\n\nHow to get the CSV:\nNSE website → Market Data → IPO → Download (.csv)\nURL: https://www.nseindia.com/market-data/all-upcoming-issues-ipo\n\nUsage: curl -X POST http://localhost:8080/api/ipo/upload-csv -F \"file=@/path/to/ipo_list.csv\""
+          },
+          "response": []
+        },
+        {
+          "name": "Get All IPOs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/ipo/all",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "ipo", "all"]
+            },
+            "description": "Get all IPOs stored in database."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Upcoming Listings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/ipo/upcoming",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "ipo", "upcoming"]
+            },
+            "description": "Get upcoming listings (listing date >= today). Sorted by listing date."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Listing Open Alert",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/ipo/listing-open-alert",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "ipo", "listing-open-alert"]
+            },
+            "description": "Send listing open performance alert for today's listings to Investment_picks_bot. Runs automatically at 9:30 AM on listing day."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Listing EOD Alert",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/ipo/listing-eod-alert",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "ipo", "listing-eod-alert"]
+            },
+            "description": "Send EOD (end-of-day) performance alert for today's listings to Investment_picks_bot. Runs automatically at 3:35 PM on listing day."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Upcoming Listings Summary",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/ipo/upcoming-summary",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "ipo", "upcoming-summary"]
+            },
+            "description": "Send upcoming listings summary (next 14 days) to Investment_picks_bot."
+          },
+          "response": []
+        },
+        {
+          "name": "IPO Strategy Scan",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/ipo/strategy-scan",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "ipo", "strategy-scan"]
+            },
+            "description": "Scan past IPOs from the last 1 year for weekly breakout, reversal breakout, and breakdown signals. Alerts go to Investment_picks_bot."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "US Market Weekly Breakouts",
+      "item": [
+        {
+          "name": "Capture US Weekly Range",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/us-weekly/capture",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["us-weekly", "capture"]
+            },
+            "description": "Seed Finviz 52-week high list + Yahoo Finance weekly data for US stocks. Equivalent to Monday 6:00 AM IST scheduler."
+          },
+          "response": []
+        },
+        {
+          "name": "Scan US Daily Close",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/us-weekly/scan",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["us-weekly", "scan"]
+            },
+            "description": "Manually trigger one daily scan cycle. Fetches latest daily candle from Yahoo Finance for all tracked US tickers."
+          },
+          "response": []
+        },
+        {
+          "name": "View All US States",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/us-weekly/state",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["us-weekly", "state"]
+            },
+            "description": "View current state for all seeded US tickers. Shows weeklyHigh, weeklyLow, buy/sell alert flags, and 52-week high flag."
+          },
+          "response": []
+        },
+        {
+          "name": "View Watching US Tickers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/us-weekly/watching",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["us-weekly", "watching"]
+            },
+            "description": "View only US tickers still being watched (not yet alerted on both sides)."
+          },
+          "response": []
+        },
+        {
+          "name": "View Alerted US Tickers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/us-weekly/alerted",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["us-weekly", "alerted"]
+            },
+            "description": "View US tickers that already triggered at least one side (buy or sell) this week."
+          },
+          "response": []
+        },
+        {
+          "name": "View 52-Week High US Tickers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/us-weekly/52wk",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["us-weekly", "52wk"]
+            },
+            "description": "View only US tickers sourced from the Finviz 52-week high list. These are the highest conviction BUY setups."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Test Endpoints",
+      "item": [
+        {
+          "name": "Sync IPOs (Test)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/ipo/sync",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["test", "ipo", "sync"]
+            },
+            "description": "Test endpoint to manually sync IPOs."
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger IPO Alerts (Test)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/ipo/trigger-alerts",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["test", "ipo", "trigger-alerts"]
+            },
+            "description": "Test endpoint to manually trigger all IPO alerts."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
+

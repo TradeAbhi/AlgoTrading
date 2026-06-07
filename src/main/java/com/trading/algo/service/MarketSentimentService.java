@@ -1,5 +1,17 @@
 package com.trading.algo.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trading.algo.telegram.TelegramService;
+import com.trading.algo.upstox.UpstoxInstrumentMasterService;
+import com.trading.algo.upstox.UpstoxMarketDataService;
+import com.trading.algo.upstox.UpstoxTokenService;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.CookieManager;
@@ -18,20 +30,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
-
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trading.algo.telegram.TelegramService;
-import com.trading.algo.upstox.UpstoxInstrumentMasterService;
-import com.trading.algo.upstox.UpstoxMarketDataService;
-import com.trading.algo.upstox.UpstoxTokenService;
-
-import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor

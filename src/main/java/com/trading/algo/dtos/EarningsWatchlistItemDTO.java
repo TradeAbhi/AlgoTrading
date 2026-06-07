@@ -1,14 +1,13 @@
 package com.trading.algo.dtos;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-
 import com.trading.algo.entity.EarningsWatchlist.WatchPhase;
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * Lightweight response object for the earnings watchlist API.

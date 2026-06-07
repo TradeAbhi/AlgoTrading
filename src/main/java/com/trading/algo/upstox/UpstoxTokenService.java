@@ -1,21 +1,19 @@
 package com.trading.algo.upstox;
 
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trading.algo.telegram.TelegramService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.core.env.Environment;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-
-import org.springframework.core.env.Environment;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trading.algo.telegram.TelegramService;
-
-import lombok.RequiredArgsConstructor;
 
 /**
  * UpstoxTokenService

@@ -1,25 +1,6 @@
 package com.trading.algo.orb;
 
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
-import java.util.Map;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-
-import com.trading.algo.config.OrbConfig;
-import com.trading.algo.dtos.OrbCandle;
-import com.trading.algo.dtos.OrbSymbolState;
-import com.trading.algo.telegram.TelegramService;
-
-import jakarta.annotation.PostConstruct;
 
 /**
  * Opening Range Breakout (ORB) Scanner — Nifty 500

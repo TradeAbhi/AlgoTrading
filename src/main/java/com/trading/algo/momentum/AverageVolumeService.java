@@ -1,11 +1,10 @@
 package com.trading.algo.momentum;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import lombok.extern.slf4j.Slf4j;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Maintains a simple in-memory store of 20-day average daily volumes.

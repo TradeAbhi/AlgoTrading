@@ -1,22 +1,5 @@
 package com.trading.algo.fibostrategy;
 
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList; // OPTIMIZATION: batch DB — thread-safe list to collect trades
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
-
-import org.springframework.stereotype.Service;
-
 import com.trading.algo.config.BacktestConfig;
 import com.trading.algo.dtos.BacktestSummaryDTO;
 import com.trading.algo.dtos.Candle;
@@ -26,9 +9,20 @@ import com.trading.algo.repo.BacktestTradeRepository;
 import com.trading.algo.service.UniverseService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * Orchestrates the backtest with parallel symbol processing and a

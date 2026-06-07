@@ -1,16 +1,15 @@
 package com.trading.algo.repo;
 
-import java.time.LocalDate;
-import java.util.List;
-
+import com.trading.algo.entity.BacktestTrade.Outcome;
+import com.trading.algo.entity.IndexBacktestTrade;
+import com.trading.algo.entity.IndexBacktestTrade.IndexName;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import com.trading.algo.entity.BacktestTrade.Outcome;
-import com.trading.algo.entity.IndexBacktestTrade;
-import com.trading.algo.entity.IndexBacktestTrade.IndexName;
+import java.time.LocalDate;
+import java.util.List;
 
 @Repository
 public interface IndexBacktestTradeRepository extends JpaRepository<IndexBacktestTrade, Long> {

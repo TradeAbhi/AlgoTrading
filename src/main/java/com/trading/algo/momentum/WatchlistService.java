@@ -1,26 +1,24 @@
 package com.trading.algo.momentum;
 
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
 import com.trading.algo.config.WatchlistConfig;
 import com.trading.algo.dtos.WatchlistCategory;
 import com.trading.algo.dtos.WatchlistItem;
 import com.trading.algo.dtos.WatchlistResponse;
 import com.trading.algo.service.UniverseService;
 import com.trading.algo.upstox.UpstoxMarketDataService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Core service that:

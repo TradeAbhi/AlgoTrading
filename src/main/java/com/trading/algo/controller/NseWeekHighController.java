@@ -1,17 +1,16 @@
 package com.trading.algo.controller;
 
-import java.util.Map;
-
+import com.trading.algo.service.NseWeekHighService;
+import com.trading.algo.service.WeekHighWeeklyCloseBreakoutService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
-import com.trading.algo.service.NseWeekHighService;
-import com.trading.algo.service.WeekHighWeeklyCloseBreakoutService;
-
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.util.Map;
 
 /**
  * REST controller for 52-week high/low CSV Telegram alerts.
@@ -80,5 +79,30 @@ public class NseWeekHighController {
         log.info("POST /api/nse/52-week-high/weekly-close-breakout - manual trigger");
         weekHighWeeklyCloseBreakoutService.scanAndAlert();
         return ResponseEntity.ok(Map.of("status", "52-week high weekly close breakout scan complete"));
+    }
+
+    /**
+     * Upload an NSE CSV (same format as the NSE 52-week highs CSV) and run the
+     * weekly/daily filters against the uploaded symbol list. Any signals found
+     * will be sent to Telegram using existing alert logic.
+     */
+    @PostMapping("/upload-52-week")
+    public ResponseEntity<Map<String, Object>> upload52Week(@org.springframework.web.bind.annotation.RequestParam("file") MultipartFile file) {
+        log.info("POST /api/nse/upload-52-week — file upload trigger");
+        try {
+            java.util.List<String> symbols = nseWeekHighService.parseUploadedCsv(file);
+            if (symbols.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("status", "no symbols found in uploaded file"));
+            }
+
+            weekHighWeeklyCloseBreakoutService.scanAndAlertForSymbols(symbols);
+            return ResponseEntity.ok(Map.of(
+                    "status", "processing started",
+                    "symbolsProcessed", symbols.size()
+            ));
+        } catch (Exception e) {
+            log.error("upload-52-week failed: {}", e.getMessage());
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
     }
 }

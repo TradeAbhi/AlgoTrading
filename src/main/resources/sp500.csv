@@ -1,0 +1,100 @@
+# S&P 500 / Nasdaq 100 watchlist for US Weekly Breakout Scanner
+# Format: SYMBOL,COMPANY_NAME
+# Place at: src/main/resources/sp500.csv
+# Download full S&P 500 list from: https://en.wikipedia.org/wiki/List_of_S%26P_500_companies
+# Or use the Nasdaq 100 list for a tighter, more liquid 100-stock universe
+
+AAPL,Apple Inc.
+MSFT,Microsoft Corporation
+NVDA,NVIDIA Corporation
+AMZN,Amazon.com Inc.
+META,Meta Platforms Inc.
+GOOGL,Alphabet Inc. Class A
+GOOG,Alphabet Inc. Class C
+TSLA,Tesla Inc.
+BRK.B,Berkshire Hathaway Inc. Class B
+AVGO,Broadcom Inc.
+JPM,JPMorgan Chase & Co.
+LLY,Eli Lilly and Company
+V,Visa Inc.
+UNH,UnitedHealth Group Incorporated
+XOM,Exxon Mobil Corporation
+MA,Mastercard Incorporated
+HD,The Home Depot Inc.
+PG,Procter & Gamble Company
+COST,Costco Wholesale Corporation
+JNJ,Johnson & Johnson
+ABBV,AbbVie Inc.
+MRK,Merck & Co. Inc.
+CVX,Chevron Corporation
+CRM,Salesforce Inc.
+NFLX,Netflix Inc.
+AMD,Advanced Micro Devices Inc.
+BAC,Bank of America Corporation
+KO,The Coca-Cola Company
+PEP,PepsiCo Inc.
+TMO,Thermo Fisher Scientific Inc.
+WMT,Walmart Inc.
+ORCL,Oracle Corporation
+CSCO,Cisco Systems Inc.
+ACN,Accenture plc
+ABT,Abbott Laboratories
+MCD,McDonald's Corporation
+WFC,Wells Fargo & Company
+LIN,Linde plc
+PM,Philip Morris International Inc.
+IBM,International Business Machines Corporation
+CAT,Caterpillar Inc.
+TXN,Texas Instruments Incorporated
+GE,GE Aerospace
+INTU,Intuit Inc.
+QCOM,QUALCOMM Incorporated
+SPGI,S&P Global Inc.
+MS,Morgan Stanley
+GS,The Goldman Sachs Group Inc.
+RTX,RTX Corporation
+ISRG,Intuitive Surgical Inc.
+NOW,ServiceNow Inc.
+AMGN,Amgen Inc.
+HON,Honeywell International Inc.
+T,AT&T Inc.
+PFE,Pfizer Inc.
+BKNG,Booking Holdings Inc.
+AMAT,Applied Materials Inc.
+VRTX,Vertex Pharmaceuticals Incorporated
+ADP,Automatic Data Processing Inc.
+TJX,The TJX Companies Inc.
+UBER,Uber Technologies Inc.
+SCHW,The Charles Schwab Corporation
+SYK,Stryker Corporation
+LOW,Lowe's Companies Inc.
+MDT,Medtronic plc
+GILD,Gilead Sciences Inc.
+PANW,Palo Alto Networks Inc.
+ETN,Eaton Corporation plc
+BMY,Bristol-Myers Squibb Company
+MU,Micron Technology Inc.
+DE,Deere & Company
+REGN,Regeneron Pharmaceuticals Inc.
+LRCX,Lam Research Corporation
+ADI,Analog Devices Inc.
+KLAC,KLA Corporation
+INTC,Intel Corporation
+# Add remaining S&P 500 tickers below...
+# Full list: https://en.wikipedia.org/wiki/List_of_S%26P_500_companies
+# application.yml additions:
+# ─────────────────────────────────────────────────────
+# twelvedata:
+#   api-key: YOUR_FREE_API_KEY   # get at https://twelvedata.com (free)
+#
+# Free tier limits:
+#   8 API calls/minute
+#   800 credits/day
+#   weekly candle = 2 credits, daily candle = 1 credit
+#
+# For 75 tickers:
+#   Seed (Mon):  75 × 2 credits = 150 credits  ✅ fits free tier
+#   Daily scan:  75 × 1 credit  = 75  credits  ✅ fits free tier
+#
+# For 500 tickers:
+#   Upgrade to Basic plan ($8/mo) — 55 calls/min, 120k credits/day

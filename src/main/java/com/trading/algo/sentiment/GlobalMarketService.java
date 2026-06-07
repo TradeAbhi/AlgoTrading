@@ -1,6 +1,14 @@
 package com.trading.algo.sentiment;
 
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trading.algo.telegram.TelegramService;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URI;
@@ -8,22 +16,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trading.algo.telegram.TelegramService;
-
-import lombok.RequiredArgsConstructor;
-import jakarta.annotation.PostConstruct;
-
-import org.springframework.core.env.Environment;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
 
 /**
  * GlobalMarketService

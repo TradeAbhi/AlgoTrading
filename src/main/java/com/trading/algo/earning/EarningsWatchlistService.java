@@ -1,16 +1,5 @@
 package com.trading.algo.earning;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import com.trading.algo.dtos.EarningsWatchlistItemDTO;
 import com.trading.algo.entity.Earnings;
 import com.trading.algo.entity.EarningsWatchlist;
@@ -18,9 +7,18 @@ import com.trading.algo.entity.EarningsWatchlist.WatchPhase;
 import com.trading.algo.repo.EarningsRepository;
 import com.trading.algo.repo.EarningsWatchlistRepository;
 import com.trading.algo.service.UniverseService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Manages the earnings-based watchlist.

@@ -1,27 +1,21 @@
 package com.trading.algo.telegram;
 
 
-import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
-import java.util.Collections;
-import java.util.EnumMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-
+import com.trading.algo.dtos.WatchlistCategory;
+import com.trading.algo.dtos.WatchlistItem;
+import com.trading.algo.dtos.WatchlistResponse;
+import com.trading.algo.momentum.WatchlistService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import com.trading.algo.dtos.WatchlistCategory;
-import com.trading.algo.dtos.WatchlistItem;
-import com.trading.algo.dtos.WatchlistResponse;
-import com.trading.algo.momentum.WatchlistService;
-
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service

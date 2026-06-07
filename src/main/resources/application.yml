@@ -100,10 +100,29 @@ telegram:
     token: ${TELEGRAM_BOT_TOKEN}
   chat:
     id: ${TELEGRAM_CHAT_ID}
+  investment-picks:
+    bot:
+      token: 8712660586:AAHBTK7jCc-VqPdCAPo-rl5B0OZuvqdus84
+    chat:
+      id: 780646088
+  intraday:
+    bot:
+      token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
+    chat:
+      id: 780646088
+  delta:
+    bot:
+      token: 8883503257:AAE3ln_MmU7ETbpqsCROoFhcJqXm5cR50tA
+    chat:
+      id: 780646088
 
 # (Fallback values - NOT recommended for production)
 telegram.bot.token: 8271537265:AAGyYMTjdOELAcs2Iq4EvaT60f8-QvHH5v0
 telegram.chat.id: 780646088
+telegram.investment-picks.bot.token: 8712660586:AAHBTK7jCc-VqPdCAPo-rl5B0OZuvqdus84
+telegram.investment-picks.chat.id: 780646088
+telegram.intraday.bot.token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
+telegram.intraday.chat.id: 780646088
 
 upstox:
   access:
@@ -111,3 +130,41 @@ upstox:
   api:
     key: de32ef46-2d03-428c-903c-a82ebb8a7fc4
     secret: 9eiwfmkz4e
+
+twelvedata:
+  api-key: 3f784585013c404186706bf9ba27ef7a
+
+# ============================================================
+# Delta Exchange Alert Service Configuration
+# ============================================================
+
+delta:
+  api:
+    base-url: https://api.india.delta.exchange
+    testnet: false
+    testnet-url: https://testnet-api.delta.exchange
+  symbols: BTCUSD,ETHUSD,SOLUSD,PAXGUSD,XRPUSD
+
+alert:
+  scheduler:
+    cron: "0 0/15 * * * *"
+  pdl:
+    refresh:
+      cron: "0 1 0 * * *"
+  cooldown:
+    minutes: 15
+
+logging:
+  level:
+    com.trading.algo.delta: DEBUG
+    okhttp3: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+

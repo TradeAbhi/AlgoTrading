@@ -1,13 +1,12 @@
 package com.trading.algo.service;
 
-import java.util.List;
-import org.springframework.stereotype.Service;
-
 import com.trading.algo.ipo.Ipo;
 import com.trading.algo.ipo.IpoRepository;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 @Slf4j
 @Service

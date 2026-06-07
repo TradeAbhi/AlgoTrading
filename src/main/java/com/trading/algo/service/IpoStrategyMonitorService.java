@@ -1,27 +1,21 @@
 package com.trading.algo.service;
 
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.temporal.TemporalAdjusters;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.ipo.Ipo;
 import com.trading.algo.ipo.IpoRepository;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.temporal.TemporalAdjusters;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -88,14 +82,14 @@ public class IpoStrategyMonitorService {
                         .thenComparingDouble(IpoSignal::changePct).reversed())
                 .toList();
 
-        if (freshSignals.isEmpty()) {
-            log.info("IPO strategy scan complete: no fresh signals, skipped={}", skipped);
-            return;
-        }
+         if (freshSignals.isEmpty()) {
+             log.info("IPO strategy scan complete: no fresh signals, skipped={}", skipped);
+             return;
+         }
 
-        freshSignals.forEach(this::markAlertedToday);
-        telegramService.sendMessage(buildMessage(freshSignals, ipos.size(), skipped));
-    }
+         freshSignals.forEach(this::markAlertedToday);
+         telegramService.sendMessageToInvestmentPicks(buildMessage(freshSignals, ipos.size(), skipped));
+     }
 
     private Optional<IpoSignal> evaluate(Ipo ipo, List<WeeklyBar> weeklyBars) {
         if (weeklyBars.size() < WEEKLY_BREAKOUT_LOOKBACK + 1) {

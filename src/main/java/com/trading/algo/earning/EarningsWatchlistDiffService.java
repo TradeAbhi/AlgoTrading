@@ -1,29 +1,22 @@
 package com.trading.algo.earning;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import com.trading.algo.dtos.EarningsWatchlistDiffDTO;
-import com.trading.algo.entity.EarningsWindowSnapshot;
 import com.trading.algo.entity.EarningsWatchlist;
 import com.trading.algo.entity.EarningsWatchlist.WatchPhase;
+import com.trading.algo.entity.EarningsWindowSnapshot;
 import com.trading.algo.repo.EarningsWatchlistRepository;
 import com.trading.algo.repo.EarningsWindowSnapshotRepository;
 import com.trading.algo.telegram.TelegramService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service

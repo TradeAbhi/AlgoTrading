@@ -1,21 +1,5 @@
 package com.trading.algo.fibostrategy;
 
-import java.time.LocalDate;
-import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
-
-import org.springframework.stereotype.Service;
-
 import com.trading.algo.config.BacktestConfig;
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.entity.BacktestTrade;
@@ -25,9 +9,19 @@ import com.trading.algo.service.UniverseService;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * Live market strategy alert service.

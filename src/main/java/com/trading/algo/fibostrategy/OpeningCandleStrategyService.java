@@ -1,22 +1,19 @@
 package com.trading.algo.fibostrategy;
 
 
-
-import java.time.LocalDate;
-import java.time.LocalTime;
-import java.util.List;
-import java.util.Optional;
-
-import org.springframework.stereotype.Service;
-
 import com.trading.algo.config.BacktestConfig;
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.entity.BacktestTrade;
 import com.trading.algo.entity.BacktestTrade.Direction;
 import com.trading.algo.entity.BacktestTrade.Outcome;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Opening Candle Strategy — corrected rules:

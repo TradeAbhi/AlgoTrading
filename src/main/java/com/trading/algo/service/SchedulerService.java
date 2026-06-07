@@ -1,12 +1,6 @@
 package com.trading.algo.service;
 
 
-import java.time.LocalDate;
-import java.util.List;
-
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
 import com.trading.algo.earning.EarningsService;
 import com.trading.algo.earning.EarningsWatchlistDiffService;
 import com.trading.algo.entity.Earnings;
@@ -17,9 +11,13 @@ import com.trading.algo.ipo.IpoRepository;
 import com.trading.algo.repo.EarningsRepository;
 import com.trading.algo.repo.EarningsWatchlistRepository;
 import com.trading.algo.telegram.TelegramService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDate;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -311,6 +309,48 @@ public class SchedulerService {
     // =========================================================================
     // 52-week high / low - Friday at 4:00 PM after weekly close
     // =========================================================================
+
+    /**
+     * Friday at 10:00 AM — morning reminder for 52-week high CSV scan.
+     * Alerts that upload and scan are scheduled for 3:50 PM and 4:00 PM.
+     */
+    @Scheduled(cron = "0 0 10 * * FRI", zone = "Asia/Kolkata")
+    public void csvUploadMorningReminder() {
+        log.info("CSV upload morning reminder — Friday 10:00 AM");
+        StringBuilder sb = new StringBuilder();
+        sb.append("📅 *52-Week High Scan Today*\n");
+        sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+        sb.append("🕐 Today's schedule:\n\n");
+        sb.append("📤 3:50 PM — Upload reminder\n");
+        sb.append("   (get ready to upload CSV)\n\n");
+        sb.append("🔍 4:00 PM — Scan & alerts\n");
+        sb.append("   (weekly & daily breakouts)\n\n");
+        sb.append("━━���━━━━━━━━━━━━━━━━━\n");
+        sb.append("Download CSV from NSE website and have it ready by 4 PM.");
+        
+        telegramService.sendMessageToInvestmentPicks(sb.toString());
+    }
+
+    /**
+     * Friday at 3:50 PM — reminder to upload 52-week high CSV for scanning.
+     * Sends reminder 10 minutes before the scan runs.
+     */
+    @Scheduled(cron = "0 50 15 * * FRI", zone = "Asia/Kolkata")
+    public void csvUploadReminder() {
+        log.info("CSV upload reminder — Friday 3:50 PM");
+        StringBuilder sb = new StringBuilder();
+        sb.append("📤 *Upload 52-Week High CSV*\n");
+        sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+        sb.append("Time to upload the NSE 52-week high CSV for scanning.\n\n");
+        sb.append("📍 Upload endpoint:\n");
+        sb.append("`POST /api/nse/upload-52-week`\n\n");
+        sb.append("Command (PowerShell):\n");
+        sb.append("`curl -F \"file=@C:\\path\\to\\52_week_highs.csv\" http://localhost:8080/api/nse/upload-52-week`\n\n");
+        sb.append("The scan will run at 4:00 PM IST.\n");
+        sb.append("━━━━━━━━━━━━━━━━━━━━");
+        
+        telegramService.sendMessageToInvestmentPicks(sb.toString());
+    }
 
     /**
      * Runs every Friday at 4:00 PM IST after the weekly candle is complete.

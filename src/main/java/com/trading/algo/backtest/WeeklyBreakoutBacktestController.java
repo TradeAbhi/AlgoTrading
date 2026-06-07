@@ -1,9 +1,6 @@
 package com.trading.algo.backtest;
 
-import java.time.LocalDate;
-import java.util.Map;
-import java.util.UUID;
-
+import com.trading.algo.weekly.WeeklyBreakoutBacktestService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -13,7 +10,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.trading.algo.weekly.WeeklyBreakoutBacktestService;
+import java.time.LocalDate;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * REST trigger for weekly breakout backtest.

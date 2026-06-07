@@ -1,26 +1,19 @@
 package com.trading.algo.fibostrategy;
 
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Map;
-
-import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
 import com.trading.algo.dtos.BacktestSummaryDTO;
 import com.trading.algo.entity.BacktestTrade;
 import com.trading.algo.entity.BacktestTrade.Outcome;
 import com.trading.algo.repo.BacktestTradeRepository;
 import com.trading.algo.service.UniverseService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Backtest REST controller.

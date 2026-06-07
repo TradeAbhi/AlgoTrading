@@ -1,19 +1,17 @@
 package com.trading.algo.service;
 
+import com.trading.algo.config.WatchlistConfig;
+import com.trading.algo.upstox.UpstoxInstrumentMasterService;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
-
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
-import com.trading.algo.config.WatchlistConfig;
-import com.trading.algo.upstox.UpstoxInstrumentMasterService;
-
-import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * Manages the F&O universe of Upstox instrument keys.

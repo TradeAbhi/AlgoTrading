@@ -1,68 +1,66 @@
 package com.trading.algo.usmarket;
 
-
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.LocalTime;
-import java.util.List;
-
+import com.trading.algo.dtos.UsWeeklyBreakoutState;
+import com.trading.algo.dtos.UsWeeklyBreakoutStateStore;
+import com.trading.algo.entity.UsCandle;
+import com.trading.algo.telegram.TelegramService;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import com.trading.algo.dtos.UsWeeklyBreakoutState;
-import com.trading.algo.dtos.UsWeeklyBreakoutStateStore;
-import com.trading.algo.entity.UsCandle;
-import com.trading.algo.telegram.TelegramService;
-
-import jakarta.annotation.PostConstruct;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * US Weekly Breakout Scanner (NYSE + NASDAQ)
+ * US Weekly Breakout Scanner — ATH/52-week high stocks only
  *
- * Data sources:
- *   Finviz screener  → 52-week high tickers (seeded once per week)
- *   Yahoo Finance v8 → weekly + daily OHLCV (no API key needed)
+ * Ticker source (in priority order):
+ *   1. In-memory list — populated via POST /us-weekly/upload-tickers
+ *      Paste tickers directly from WSJ 52-week high page, no file needed.
+ *   2. sp500.csv on classpath (src/main/resources/sp500.csv)
+ *      Updated manually each Friday after reviewing WSJ.
  *
- * Schedule (all IST):
- *   Monday 6:00 AM IST  → seedPreviousWeekRange()
- *                          Fetches 52-week high list from Finviz.
- *                          Fetches prev week OHLCV from Yahoo Finance.
- *                          Seeds weeklyHigh / weeklyLow for each ticker.
+ * CSV format (no header required):
+ *   NVDA
+ *   AAPL
+ *   META
+ *   (one ticker per line, # lines are comments)
  *
- *   Mon–Fri 2:00 AM IST → scanDailyClose()
- *                          US market closes at 4:00 PM EST = 1:30 AM IST.
- *                          2:00 AM gives 30 min buffer for data availability.
- *                          Fetches completed daily candle from Yahoo Finance.
- *                          BUY  if daily close > weeklyHigh (with volume).
- *                          SELL if daily close < weeklyLow  (with volume).
+ * Or with optional extra columns (only first column used):
+ *   NVDA,NASDAQ,1250.50
+ *   AAPL,NYSE,215.30
  *
- * Rolling level rules (same as Indian weekly strategy):
- *   weeklyHigh only moves UP   — daily candle high > weeklyHigh but close doesn't confirm.
- *   weeklyLow  only moves DOWN — daily candle low  < weeklyLow  but close doesn't confirm.
- *   Opposite side frozen → shifts to prev daily H/L on signal trigger.
+ * Workflow:
+ *   Friday  → check https://www.wsj.com/market-data/stocks/newfiftytwoweekhighsandlows
+ *           → copy NYSE + NASDAQ 52-week high tickers
+ *           → POST /us-weekly/upload-tickers   (easiest — paste directly)
+ *             OR update sp500.csv and restart
  *
- * Filters:
- *   1. Weekly range width: 1.5% ≤ range ≤ 8%
- *   2. Breakout candle volume ≥ 1.5× average daily volume (weeklyVol / 5)
- *   3. 52-week high flag from Finviz (BUY signals only from this list for higher conviction)
+ *   Monday 6:00 AM IST → seedPreviousWeekRange() auto-runs
+ *   Mon–Fri 2:00 AM IST → scanDailyClose() after US market close (1:30 AM IST)
  */
 @Service
 public class UsWeeklyBreakoutScannerService {
 
     private static final Logger log = LoggerFactory.getLogger(UsWeeklyBreakoutScannerService.class);
+    private static final String DEFAULT_TICKER_CSV = "sp500.csv";
 
     private static final double MIN_RANGE_PCT         = 1.5;
     private static final double MAX_RANGE_PCT         = 8.0;
     private static final double MIN_VOLUME_MULTIPLIER = 1.5;
 
-    private static final LocalTime SEED_VALID_FROM = LocalTime.of(6, 0);
-    private static final LocalTime SEED_VALID_TO   = LocalTime.of(23, 59);
+    // In-memory ticker list — set via POST /us-weekly/upload-tickers
+    // CopyOnWriteArrayList for thread safety (web thread writes, scheduler reads)
+    private final CopyOnWriteArrayList<String> uploadedTickers = new CopyOnWriteArrayList<>();
 
-    private final UsMarketDataService    marketDataService;
+    private final UsMarketDataService        marketDataService;
     private final UsWeeklyBreakoutStateStore stateStore;
-    private final TelegramService        telegramService;
+    private final TelegramService            telegramService;
 
     public UsWeeklyBreakoutScannerService(UsMarketDataService marketDataService,
                                           UsWeeklyBreakoutStateStore stateStore,
@@ -75,66 +73,90 @@ public class UsWeeklyBreakoutScannerService {
     // ── Startup fallback ─────────────────────────────────────────────────────
     @PostConstruct
     public void seedOnStartupIfNeeded() {
-        DayOfWeek dow     = LocalDate.now().getDayOfWeek();
-        boolean isWeekday = dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY;
-        LocalTime now     = LocalTime.now();
+        boolean skipStartupSeed = true;
 
-        if (isWeekday && !now.isBefore(SEED_VALID_FROM) && stateStore.size() == 0) {
+        if (!skipStartupSeed) {
             log.info("[US-WEEKLY] Startup during weekday with empty store — seeding now");
             seedPreviousWeekRange();
         } else {
-            log.info("[US-WEEKLY] Startup check: weekday={} storeSize={} — no seed needed",
-                    isWeekday, stateStore.size());
+            log.info("[US-WEEKLY] Startup: weekday={} storeSize={} — no seed needed",
+                    true, stateStore.size());
         }
+    }
+
+    // ── Upload tickers from controller ───────────────────────────────────────
+    /**
+     * Called by POST /us-weekly/upload-tickers.
+     * Replaces the in-memory ticker list and immediately seeds the store.
+     * This is the primary workflow — paste tickers from WSJ, seed runs instantly.
+     */
+    public void uploadAndSeed(List<String> tickers) {
+        uploadedTickers.clear();
+        // Normalise — uppercase, strip blanks, skip comments
+        for (String t : tickers) {
+            String cleaned = t.trim().toUpperCase();
+            if (!cleaned.isEmpty() && !cleaned.startsWith("#")) {
+                // Handle "NVDA,NASDAQ,1250.50" format — take first column only
+                String ticker = cleaned.split(",")[0].trim();
+                if (!ticker.isEmpty()) uploadedTickers.add(ticker);
+            }
+        }
+        log.info("[US-WEEKLY] Uploaded {} tickers via API — seeding now", uploadedTickers.size());
+        seedPreviousWeekRange();
     }
 
     // ── Monday 6:00 AM IST: seed previous week's range ───────────────────────
     @Scheduled(cron = "0 0 6 * * MON", zone = "Asia/Kolkata")
     public void seedPreviousWeekRange() {
-        log.info("[US-WEEKLY] Seeding from Finviz 52-week high list + Yahoo Finance...");
+        log.info("[US-WEEKLY] Seeding previous week range...");
         stateStore.clear();
 
-        // Step 1: Get 52-week high tickers from Finviz
-        List<String> tickers52wkHigh = marketDataService.fetch52WeekHighTickers();
-        log.info("[US-WEEKLY] Finviz 52-week high list: {} tickers", tickers52wkHigh.size());
+        List<String> tickers = resolveTickers();
+        if (tickers.isEmpty()) {
+            log.warn("[US-WEEKLY] No tickers to seed. " +
+                    "Use POST /us-weekly/upload-tickers or add {} to resources/", DEFAULT_TICKER_CSV);
+            return;
+        }
+        log.info("[US-WEEKLY] Seeding {} tickers from {}", tickers.size(), tickerSource());
 
         int seeded = 0, skipped = 0;
 
-        for (String ticker : tickers52wkHigh) {
+        for (String ticker : tickers) {
             try {
-                // Fetch last 3 weekly candles from Yahoo Finance
-                // index 0 = current (incomplete) week
-                // index 1 = last completed week (prev week)
-                // index 2 = week before that (for prevWeekClose)
-                List<UsCandle> weeklyCandles = marketDataService.fetchWeeklyCandles(ticker, 3);
-                if (weeklyCandles.size() < 2) {
+                // Fetch last 3 weekly candles:
+                //   index size-1 = current incomplete week
+                //   index size-2 = last completed week  ← prev week
+                //   index size-3 = week before that
+                List<UsCandle> weekly = marketDataService.fetchWeeklyCandles(ticker, 3);
+                if (weekly.size() < 2) {
                     log.debug("[US-WEEKLY] {} skipped — insufficient weekly data", ticker);
                     skipped++;
                     continue;
                 }
 
-                // Yahoo returns oldest first → index size-2 = last completed week
-                UsCandle prevWeek    = weeklyCandles.get(weeklyCandles.size() - 2);
-                UsCandle prevPrevWk  = weeklyCandles.size() >= 3
-                        ? weeklyCandles.get(weeklyCandles.size() - 3) : prevWeek;
-
+                UsCandle prevWeek = weekly.get(weekly.size() - 2);
                 double wHigh   = prevWeek.getHigh();
                 double wLow    = prevWeek.getLow();
                 double wOpen   = prevWeek.getOpen();
                 double wClose  = prevWeek.getClose();
                 long   wVolume = prevWeek.getVolume();
 
-                // Filter 1: Weekly range width 1.5% – 8%
+                // Filter: weekly range 1.5% – 8%
                 double rangeWidth = ((wHigh - wLow) / wLow) * 100.0;
                 if (rangeWidth < MIN_RANGE_PCT || rangeWidth > MAX_RANGE_PCT) {
-                    log.debug("[US-WEEKLY] {} skipped — range {:.2f}%", ticker, rangeWidth);
+                    log.debug("[US-WEEKLY] {} skipped — range {}%",
+                            ticker, String.format("%.2f", rangeWidth));
                     skipped++;
                     continue;
                 }
 
-                // Fetch this week's Monday open for % move context
-                List<UsCandle> dailyCandles = marketDataService.fetchDailyCandles(ticker, 5);
-                double weekStartOpen = dailyCandles.isEmpty() ? 0 : dailyCandles.get(0).getOpen();
+                // All tickers from this source are already confirmed ATH/52-week highs
+                // (user copied them from WSJ) so is52WeekHigh = true for all
+                boolean is52WkHigh = true;
+
+                // Monday opening price for alert context
+                List<UsCandle> daily     = marketDataService.fetchDailyCandles(ticker, 5);
+                double weekStartOpen     = daily.isEmpty() ? 0 : daily.get(0).getOpen();
 
                 stateStore.put(ticker, UsWeeklyBreakoutState.builder()
                         .ticker(ticker)
@@ -148,35 +170,36 @@ public class UsWeeklyBreakoutScannerService {
                         .prevDailyLow(wLow)
                         .prevWeekClose(wClose)
                         .weekStartOpen(weekStartOpen)
-                        .is52WeekHigh(true) // all tickers from Finviz are at 52-week highs
+                        .is52WeekHigh(is52WkHigh)
                         .build());
 
                 log.debug("[US-WEEKLY] Seeded {} H:{} L:{} range:{}%",
                         ticker, wHigh, wLow, String.format("%.2f", rangeWidth));
                 seeded++;
 
-                // Polite delay — avoid hammering Yahoo Finance
-                Thread.sleep(200);
+                Thread.sleep(50);
 
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
             } catch (Exception e) {
                 log.error("[US-WEEKLY] Seed error for {}: {}", ticker, e.getMessage());
                 skipped++;
             }
         }
-        log.info("[US-WEEKLY] Seeded {} tickers ({} skipped). Scan starts at 2:00 AM IST.", seeded, skipped);
+        log.info("[US-WEEKLY] Seeded {} tickers ({} skipped).", seeded, skipped);
     }
 
-    // ── Mon–Fri 2:00 AM IST: scan completed daily candle ─────────────────────
-    // US market closes at 4:00 PM EST = 1:30 AM IST next day.
-    // 2:00 AM gives 30 min buffer for Yahoo Finance data availability.
-    @Scheduled(cron = "0 0 2 * * MON-FRI", zone = "Asia/Kolkata")
+    // ── Mon–Fri 10:00 AM IST: scan daily close ────────────────────────────────
+    @Scheduled(cron = "0 0 10 * * MON-FRI", zone = "Asia/Kolkata")
     public void scanDailyClose() {
         if (stateStore.size() == 0) {
-            log.warn("[US-WEEKLY] State store empty at 2:00 AM — was seedPreviousWeekRange skipped?");
+            log.warn("[US-WEEKLY] State store empty — upload tickers via " +
+                    "POST /us-weekly/upload-tickers or wait for Monday seed");
             return;
         }
 
-        log.info("[US-WEEKLY] Daily close scan — {} tickers being watched", stateStore.size());
+        log.info("[US-WEEKLY] Daily close scan — {} tickers watched", stateStore.size());
         int buyFired = 0, sellFired = 0;
 
         for (UsWeeklyBreakoutState state : stateStore.all()) {
@@ -185,19 +208,17 @@ public class UsWeeklyBreakoutScannerService {
             String ticker = state.getTicker();
 
             try {
-                // Fetch last 2 daily candles — index 0 = yesterday (just closed)
-                List<UsCandle> dailyCandles = marketDataService.fetchDailyCandles(ticker, 2);
-                if (dailyCandles.isEmpty()) continue;
+                List<UsCandle> daily = marketDataService.fetchDailyCandles(ticker, 2);
+                if (daily.isEmpty()) continue;
 
-                UsCandle today  = dailyCandles.get(dailyCandles.size() - 1); // latest completed
-                double dHigh    = today.getHigh();
-                double dLow     = today.getLow();
-                double dClose   = today.getClose();
-                long   dVolume  = today.getVolume();
-                long   avgDVol  = state.getWeeklyVolume() / 5; // approx daily avg from weekly
+                UsCandle today = daily.get(daily.size() - 1);
+                double dHigh   = today.getHigh();
+                double dLow    = today.getLow();
+                double dClose  = today.getClose();
+                long   dVolume = today.getVolume();
+                long   avgDVol = state.getWeeklyVolume() / 5;
 
-                // ── BUY side ──────────────────────────────────────────────────
-                // weeklyHigh only moves UP
+                // ── BUY side — weeklyHigh only moves UP ──────────────────────
                 if (!state.isBuyAlerted()) {
                     if (dClose > state.getWeeklyHigh()) {
                         if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
@@ -215,8 +236,7 @@ public class UsWeeklyBreakoutScannerService {
                     }
                 }
 
-                // ── SELL side ─────────────────────────────────────────────────
-                // weeklyLow only moves DOWN
+                // ── SELL side — weeklyLow only moves DOWN ────────────────────
                 if (!state.isSellAlerted()) {
                     if (dClose < state.getWeeklyLow()) {
                         if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
@@ -234,12 +254,14 @@ public class UsWeeklyBreakoutScannerService {
                     }
                 }
 
-                // Update previous daily candle
                 state.setPrevDailyHigh(dHigh);
                 state.setPrevDailyLow(dLow);
 
-                Thread.sleep(100); // polite delay
+                Thread.sleep(50);
 
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
             } catch (Exception e) {
                 log.error("[US-WEEKLY] Scan error for {}: {}", ticker, e.getMessage());
             }
@@ -251,14 +273,62 @@ public class UsWeeklyBreakoutScannerService {
     public void triggerManualSeed() { seedPreviousWeekRange(); }
     public void triggerManualScan() { scanDailyClose(); }
 
+    // ── Ticker resolution — uploaded list takes priority over CSV ────────────
+    /**
+     * Returns the ticker list to use for seeding.
+     * Priority:
+     *   1. In-memory uploaded list (set via POST /us-weekly/upload-tickers)
+     *   2. sp500.csv from classpath
+     */
+    private List<String> resolveTickers() {
+        if (!uploadedTickers.isEmpty()) {
+            return new ArrayList<>(uploadedTickers);
+        }
+        return loadTickersFromCsv();
+    }
+
+    private String tickerSource() {
+        return uploadedTickers.isEmpty() ? DEFAULT_TICKER_CSV : "uploaded list";
+    }
+
+    /**
+     * Reads sp500.csv from classpath.
+     * Format: one ticker per line (first comma-separated column used).
+     * Lines starting with # are comments.
+     */
+    private List<String> loadTickersFromCsv() {
+        List<String> tickers = new ArrayList<>();
+        try {
+            var stream = getClass().getClassLoader().getResourceAsStream(DEFAULT_TICKER_CSV);
+            if (stream == null) {
+                log.warn("[US-WEEKLY] {} not found on classpath. Use POST /us-weekly/upload-tickers instead.",
+                        DEFAULT_TICKER_CSV);
+                return tickers;
+            }
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                String ticker = line.split(",")[0].trim().toUpperCase();
+                if (!ticker.isEmpty()) tickers.add(ticker);
+            }
+            reader.close();
+            log.info("[US-WEEKLY] Loaded {} tickers from {}", tickers.size(), DEFAULT_TICKER_CSV);
+        } catch (Exception e) {
+            log.error("[US-WEEKLY] Failed to load {}: {}", DEFAULT_TICKER_CSV, e.getMessage());
+        }
+        return tickers;
+    }
+
     // ── Telegram alert builders ───────────────────────────────────────────────
     private void sendBuyAlert(UsWeeklyBreakoutState state, UsCandle candle) {
-        double close       = candle.getClose();
-        double slLevel     = state.getPrevDailyLow();
-        double riskPct     = ((close - slLevel) / close) * 100.0;
-        double movePct     = state.getWeekStartOpen() > 0
+        double close     = candle.getClose();
+        double slLevel   = state.getPrevDailyLow();
+        double riskPct   = ((close - slLevel) / close) * 100.0;
+        double movePct   = state.getWeekStartOpen() > 0
                 ? ((close - state.getWeekStartOpen()) / state.getWeekStartOpen()) * 100.0 : 0;
-        double prevWkChg   = state.getPrevWeekClose() > 0
+        double prevWkChg = state.getPrevWeekClose() > 0
                 ? ((close - state.getPrevWeekClose()) / state.getPrevWeekClose()) * 100.0 : 0;
 
         telegramService.sendMessage(String.format(
@@ -272,17 +342,15 @@ public class UsWeeklyBreakoutScannerService {
                         "📅 Prev week close:  $%.2f  (%s%.2f%%)%n" +
                         "📦 Day High/Low:     $%.2f / $%.2f%n" +
                         "📊 Volume:           %,d%n" +
-                        "🏆 52-Week High:     %s%n" +
+                        "🏆 52-Week High:     ✅ Yes%n" +
                         "📅 Date (EST):       %s",
                 state.getTicker(),
-                close,
-                state.getWeeklyHigh(),
+                close, state.getWeeklyHigh(),
                 slLevel, riskPct,
                 movePct >= 0 ? "+" : "", movePct,
                 state.getPrevWeekClose(), prevWkChg >= 0 ? "+" : "", prevWkChg,
                 candle.getHigh(), candle.getLow(),
                 candle.getVolume(),
-                state.is52WeekHigh() ? "✅ Yes" : "❌ No",
                 candle.getDate()));
 
         log.info("[US-WEEKLY] 🟢 BUY  {} @ ${} | weeklyH ${} | SL ${} ({}% risk)",
@@ -291,12 +359,12 @@ public class UsWeeklyBreakoutScannerService {
     }
 
     private void sendSellAlert(UsWeeklyBreakoutState state, UsCandle candle) {
-        double close       = candle.getClose();
-        double slLevel     = state.getPrevDailyHigh();
-        double riskPct     = ((slLevel - close) / close) * 100.0;
-        double movePct     = state.getWeekStartOpen() > 0
+        double close     = candle.getClose();
+        double slLevel   = state.getPrevDailyHigh();
+        double riskPct   = ((slLevel - close) / close) * 100.0;
+        double movePct   = state.getWeekStartOpen() > 0
                 ? ((close - state.getWeekStartOpen()) / state.getWeekStartOpen()) * 100.0 : 0;
-        double prevWkChg   = state.getPrevWeekClose() > 0
+        double prevWkChg = state.getPrevWeekClose() > 0
                 ? ((close - state.getPrevWeekClose()) / state.getPrevWeekClose()) * 100.0 : 0;
 
         telegramService.sendMessage(String.format(
@@ -312,8 +380,7 @@ public class UsWeeklyBreakoutScannerService {
                         "📊 Volume:           %,d%n" +
                         "📅 Date (EST):       %s",
                 state.getTicker(),
-                close,
-                state.getWeeklyLow(),
+                close, state.getWeeklyLow(),
                 slLevel, riskPct,
                 movePct >= 0 ? "+" : "", movePct,
                 state.getPrevWeekClose(), prevWkChg >= 0 ? "+" : "", prevWkChg,

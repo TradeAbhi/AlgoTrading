@@ -1,12 +1,12 @@
 package com.trading.algo.dtos;
 
-import java.time.LocalDateTime;
-import java.util.List;
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Response for the /api/earnings-watchlist/diff endpoint.

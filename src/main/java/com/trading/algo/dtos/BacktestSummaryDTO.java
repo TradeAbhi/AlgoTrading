@@ -1,12 +1,12 @@
 package com.trading.algo.dtos;
 
-import java.time.LocalDate;
-import java.util.List;
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Aggregated summary of the backtest run.

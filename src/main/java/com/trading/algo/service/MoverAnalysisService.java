@@ -1,18 +1,6 @@
 package com.trading.algo.service;
 
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
-
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.dtos.WatchlistItem;
 import com.trading.algo.entity.MoverCharacteristics;
@@ -21,9 +9,19 @@ import com.trading.algo.repo.MoverCharacteristicsRepository;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Analyses characteristics of daily movers across 4 categories:

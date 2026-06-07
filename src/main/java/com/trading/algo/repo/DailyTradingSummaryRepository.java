@@ -1,11 +1,10 @@
 package com.trading.algo.repo;
 
-import java.time.LocalDate;
-import java.util.List;
-
+import com.trading.algo.entity.DailyTradingSummary;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-import com.trading.algo.entity.DailyTradingSummary;
+import java.time.LocalDate;
+import java.util.List;
 
 public interface DailyTradingSummaryRepository 
 extends JpaRepository<DailyTradingSummary, Long> {

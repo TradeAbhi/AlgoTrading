@@ -1,14 +1,13 @@
 package com.trading.algo.repo;
 
-import java.time.LocalDate;
-import java.util.List;
-
+import com.trading.algo.entity.MoverCharacteristics;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import com.trading.algo.entity.MoverCharacteristics;
+import java.time.LocalDate;
+import java.util.List;
 
 @Repository
 public interface MoverCharacteristicsRepository

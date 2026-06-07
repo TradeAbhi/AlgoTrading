@@ -1,12 +1,5 @@
 package com.trading.algo.service;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.List;
-
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trading.algo.ipo.Ipo;
@@ -14,9 +7,14 @@ import com.trading.algo.ipo.IpoRepository;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
 import com.trading.algo.upstox.UpstoxMarketDataService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Monitors IPO listing performance on listing day using Upstox live quotes.
@@ -98,7 +96,7 @@ public class IpoMonitorService {
                 sb.append("━━━━━━━━━━━━━━━━━━━━\n");
                 sb.append("_EOD performance update at 3:35 PM_");
 
-                telegramService.sendMessage(sb.toString());
+                telegramService.sendMessageToInvestmentPicks(sb.toString());
                 log.info("Listing open alert sent for {} — gain={}%", ipo.getName(), fmt(gainPct));
 
             } catch (Exception e) {
@@ -168,7 +166,7 @@ public class IpoMonitorService {
                 sb.append("📊 vs Issue    : *").append(fmt(gainPct)).append("%*\n");
                 sb.append("📉 Open→Close  : ").append(fmt(fromOpenPct)).append("%\n");
 
-                telegramService.sendMessage(sb.toString());
+                telegramService.sendMessageToInvestmentPicks(sb.toString());
                 log.info("Listing EOD alert sent for {} — close=₹{} gain={}%",
                         ipo.getName(), fmt(close), fmt(gainPct));
 
@@ -189,7 +187,7 @@ public class IpoMonitorService {
         List<Ipo> upcoming = ipoRepo.findByListingDateBetweenOrderByListingDateAsc(today, nextTwo);
 
         if (upcoming.isEmpty()) {
-            telegramService.sendMessage("📋 No IPO listings in the next 14 days.");
+            telegramService.sendMessageToInvestmentPicks("📋 No IPO listings in the next 14 days.");
             return;
         }
 
@@ -206,10 +204,10 @@ public class IpoMonitorService {
                 sb.append("   💰 Issue: ₹").append(fmt(ipo.getIssuePrice())).append("\n");
             }
             sb.append("\n");
-        }
-        sb.append("Total: ").append(upcoming.size()).append(" upcoming listings");
-        telegramService.sendMessage(sb.toString());
-    }
+         }
+         sb.append("Total: ").append(upcoming.size()).append(" upcoming listings");
+         telegramService.sendMessageToInvestmentPicks(sb.toString());
+     }
 
     // =========================================================================
     // Symbol resolution — try to find NSE symbol from instrument master
@@ -247,14 +245,14 @@ public class IpoMonitorService {
         }
     }
 
-    private void sendUnresolvedAlert(Ipo ipo, String type) {
-        telegramService.sendMessage(
-            "⚠️ *IPO " + type + " Alert*\n" +
-            "🏢 " + ipo.getName() + "\n" +
-            "📅 Listing: " + ipo.getListingDate() + "\n" +
-            "_Could not resolve NSE symbol — check manually_"
-        );
-    }
+     private void sendUnresolvedAlert(Ipo ipo, String type) {
+         telegramService.sendMessageToInvestmentPicks(
+             "⚠️ *IPO " + type + " Alert*\n" +
+             "🏢 " + ipo.getName() + "\n" +
+             "📅 Listing: " + ipo.getListingDate() + "\n" +
+             "_Could not resolve NSE symbol — check manually_"
+         );
+     }
 
     private String fmt(double v) {
         return String.format("%.2f", v);

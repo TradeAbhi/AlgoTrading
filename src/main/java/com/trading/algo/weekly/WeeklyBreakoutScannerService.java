@@ -1,22 +1,20 @@
 package com.trading.algo.weekly;
 
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
-import java.util.Map;
-
+import com.trading.algo.config.OrbConfig;
+import com.trading.algo.telegram.TelegramService;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import com.trading.algo.config.OrbConfig;
-import com.trading.algo.telegram.TelegramService;
-
-import jakarta.annotation.PostConstruct;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Weekly Breakout Scanner — Nifty 500

@@ -1,21 +1,19 @@
 package com.trading.algo.service;
 
+import com.trading.algo.dtos.Candle;
+import com.trading.algo.telegram.TelegramService;
+import com.trading.algo.upstox.UpstoxHistoricalCandleService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
-import com.trading.algo.dtos.Candle;
-import com.trading.algo.telegram.TelegramService;
-import com.trading.algo.upstox.UpstoxHistoricalCandleService;
-
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service

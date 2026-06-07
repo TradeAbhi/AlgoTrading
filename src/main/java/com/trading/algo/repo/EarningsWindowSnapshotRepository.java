@@ -1,11 +1,10 @@
 package com.trading.algo.repo;
 
-import java.util.Optional;
-
+import com.trading.algo.entity.EarningsWindowSnapshot;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-import com.trading.algo.entity.EarningsWindowSnapshot;
+import java.util.Optional;
 
 @Repository
 public interface EarningsWindowSnapshotRepository extends JpaRepository<EarningsWindowSnapshot, Long> {

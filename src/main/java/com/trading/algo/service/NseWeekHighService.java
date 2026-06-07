@@ -1,12 +1,10 @@
 package com.trading.algo.service;
 
-import java.nio.charset.StandardCharsets;
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trading.algo.telegram.TelegramService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.cookie.BasicCookieStore;
 import org.apache.hc.client5.http.cookie.CookieStore;
@@ -15,13 +13,16 @@ import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trading.algo.telegram.TelegramService;
-
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -103,34 +104,57 @@ public class NseWeekHighService {
                     .setDefaultCookieStore(cookieStore)
                     .build();
 
+            // Hit the NSE home page first to acquire cookies / session headers
             HttpGet homeReq = new HttpGet(NSE_HOME);
             setHeaders(homeReq, "text/html,application/xhtml+xml,*/*");
             client.execute(homeReq).close();
 
-            Thread.sleep(2000);
+            // small pause to let NSE set cookies/session on their side
+            Thread.sleep(2500);
 
             HttpGet apiReq = new HttpGet(apiUrl);
             setHeaders(apiReq, "application/json, text/plain, */*");
 
-            CloseableHttpResponse response = client.execute(apiReq);
-            String body = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
-            response.close();
-            client.close();
+            // retry loop because NSE sometimes returns a transient JSON error
+            String body = null;
+            CloseableHttpResponse response = null;
+            int attempts = 3;
+            for (int i = 1; i <= attempts; i++) {
+                try {
+                    response = client.execute(apiReq);
+                    body = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+                    response.close();
 
-            JsonNode root = objectMapper.readTree(body);
-            JsonNode dataNode = root.path("data");
+                    JsonNode root = objectMapper.readTree(body);
+                    JsonNode dataNode = root.path("data");
+                    if (dataNode.isArray() && !dataNode.isEmpty()) {
+                        log.info("52-week {} - {} stocks", type, dataNode.size());
+                        client.close();
+                        return dataNode;
+                    }
 
-            if (!dataNode.isArray() || dataNode.isEmpty()) {
-                String preview = body.length() > 300 ? body.substring(0, 300) + "..." : body;
-                log.warn("No data for 52-week {}. Response preview: {}", type, preview);
-                if (notifyOnEmptyOrError) {
-                    telegramService.sendMessage("52-Week " + type + ": No data available today.");
+                    // If server says missing index/key or returns empty array, log and retry
+                    String preview = body.length() > 300 ? body.substring(0, 300) + "..." : body;
+                    log.warn("Attempt {}/{}: No data for 52-week {}. Response preview: {}", i, attempts, type, preview);
+
+                    // backoff before next try
+                    if (i < attempts) Thread.sleep(2000L * i);
+
+                } catch (Exception inner) {
+                    log.warn("Attempt {}/{} failed while fetching 52-week {}: {}", i, attempts, type, inner.getMessage());
+                    if (i < attempts) Thread.sleep(2000L * i);
+                } finally {
+                    try { if (response != null) response.close(); } catch (Exception e) { /* ignore */ }
                 }
-            } else {
-                log.info("52-week {} - {} stocks", type, dataNode.size());
             }
 
-            return dataNode;
+            // close client and notify once after retries
+            client.close();
+            if (notifyOnEmptyOrError) {
+                telegramService.sendMessage("52-Week " + type + ": No data available today.");
+            }
+
+            return null;
         } catch (Exception e) {
             log.error("Failed to fetch 52-week {}: {}", type, e.getMessage());
             if (notifyOnEmptyOrError) {
@@ -149,6 +173,13 @@ public class NseWeekHighService {
         req.setHeader("sec-fetch-dest", "empty");
         req.setHeader("sec-fetch-mode", "cors");
         req.setHeader("sec-fetch-site", "same-origin");
+        // Additional headers to mimic a modern browser request — helps NSE accept the API call
+        req.setHeader("Origin", "https://www.nseindia.com");
+        req.setHeader("Accept-Encoding", "gzip, deflate, br");
+        req.setHeader("Connection", "keep-alive");
+        req.setHeader("sec-ch-ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\", \"Not:A-Brand\";v=\"99\"");
+        req.setHeader("sec-ch-ua-mobile", "?0");
+        req.setHeader("sec-ch-ua-platform", "\"Windows\"");
     }
 
     private String buildCsv(JsonNode dataNode, String type) {
@@ -183,5 +214,39 @@ public class NseWeekHighService {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Parse an uploaded NSE CSV (same format as the NSE 52-week export) and
+     * return the list of tickers (symbols) found in the file.
+     */
+    public java.util.List<String> parseUploadedCsv(MultipartFile file) {
+        java.util.List<String> symbols = new java.util.ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream()))) {
+            String header = reader.readLine();
+            if (header == null) return symbols;
+
+            String[] headers = header.split(",");
+            int symIdx = 0;
+            for (int i = 0; i < headers.length; i++) {
+                if (headers[i].toLowerCase().contains("symbol")) {
+                    symIdx = i;
+                    break;
+                }
+            }
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) continue;
+                String[] cols = line.split(",");
+                if (cols.length > symIdx) {
+                    String s = cols[symIdx].replaceAll("\"", "").trim().toUpperCase();
+                    if (!s.isBlank()) symbols.add(s);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to parse uploaded CSV: {}", e.getMessage());
+        }
+        return symbols;
     }
 }

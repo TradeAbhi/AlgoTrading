@@ -1,13 +1,11 @@
 package com.trading.algo.ipo;
 
+import com.trading.algo.service.IpoService;
+import com.trading.algo.service.SchedulerService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import com.trading.algo.service.IpoService;
-import com.trading.algo.service.SchedulerService;
-
-import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/test/ipo")

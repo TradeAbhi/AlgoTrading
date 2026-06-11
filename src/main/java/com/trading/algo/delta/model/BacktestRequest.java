@@ -3,7 +3,10 @@ package com.trading.algo.delta.model;
 
 import java.time.LocalDate;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * Parameters for a backtest run, supplied via the REST API.
@@ -20,6 +23,9 @@ import lombok.Data;
  * }
  */
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class BacktestRequest {
 
     /** Delta product symbol, e.g. BTCUSD */
@@ -36,23 +42,27 @@ public class BacktestRequest {
      * 2nd candle prior to the breakdown candle, expressed as %.
      * Default: 0.15 (i.e. 0.15%)
      */
+    @Builder.Default
     private double slMarginPct = 0.15;
 
     /**
      * Risk:Reward ratio for the full target.
      * Default: 3.0 → Target = Entry - (3 × risk)   [for short]
      */
+    @Builder.Default
     private double riskRewardRatio = 3.0;
 
     /**
      * R:R level at which to (a) book half quantity and (b) trail SL to entry.
      * Default: 2.0
      */
+    @Builder.Default
     private double partialExitRR = 2.0;
 
     /**
      * Percentage of the original position to close at partialExitRR.
      * Default: 50 (%)
      */
+    @Builder.Default
     private double partialExitQtyPct = 50.0;
 }

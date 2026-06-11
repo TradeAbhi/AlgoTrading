@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -22,6 +24,7 @@ import java.util.stream.Collectors;
  * GET /us-weekly/watching — view unalerted tickers only
  * GET /us-weekly/alerted  — view tickers that already triggered this week
  * GET /us-weekly/52wk     — view only the 52-week high tickers being tracked
+ * POST /us-weekly/upload-tickers — upload a list of tickers (one per line)
  */
 @RestController
 @RequestMapping("/us-weekly")
@@ -61,6 +64,23 @@ public class UsWeeklyBreakoutController {
         log.info("[US-WEEKLY] Manual scan triggered via /us-weekly/scan");
         scannerService.triggerManualScan();
         return ResponseEntity.ok(Map.of("status", "done"));
+    }
+
+    /**
+     * Upload a list of tickers to be scanned. This will replace any existing in-memory list
+     * and immediately trigger a seed operation.
+     *
+     * @param tickers A list of ticker symbols, one per line.
+     * @return A response indicating the status of the upload and seed operation.
+     */
+    @PostMapping("/upload-tickers")
+    public ResponseEntity<Map<String, Object>> uploadTickers(@RequestBody List<String> tickers) {
+        log.info("[US-WEEKLY] Ticker upload triggered via /us-weekly/upload-tickers. Received {} tickers.", tickers.size());
+        scannerService.uploadAndSeed(tickers);
+        return ResponseEntity.ok(Map.of(
+                "status", "Tickers uploaded and seeded successfully",
+                "tickersLoaded", stateStore.size()
+        ));
     }
 
     /**

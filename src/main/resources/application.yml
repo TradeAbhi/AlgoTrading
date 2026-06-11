@@ -154,6 +154,11 @@ alert:
   cooldown:
     minutes: 15
 
+volume:
+  scanner:
+    spike-multiplier: 2.0    # volume >= 2x avg  → spike
+    climax-multiplier: 3.0   # volume >= 3x avg + trending → climax
+
 logging:
   level:
     com.trading.algo.delta: DEBUG

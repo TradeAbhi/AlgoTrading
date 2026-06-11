@@ -70,6 +70,7 @@ public class BacktestTrade {
      *   e.g. risk=10pts, fixedRisk=₹10000 → qty=1000 shares
      */
     @Column(name = "quantity", columnDefinition = "INT DEFAULT 0")
+    @Builder.Default
     private Integer quantity = 0;
 
     /** Actual risk in rupees = quantity × riskPoints (≈ fixedRiskRupees, may vary due to floor) */
@@ -79,6 +80,7 @@ public class BacktestTrade {
 
     /** Actual P&L in rupees = pnlPoints × quantity */
     @Column(name = "pnl_rupees", columnDefinition = "DECIMAL(10,2) DEFAULT 0")
+    @Builder.Default
     private Double pnlRupees = 0.0;
 
     /**

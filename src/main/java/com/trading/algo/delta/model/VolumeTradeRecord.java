@@ -39,4 +39,13 @@ public class VolumeTradeRecord {
 
     /** P&L in R-multiples. Win = +RR, Loss = -1 */
     private BigDecimal    pnlR;
+
+    /** Whether the signal candle was near a swing S/R level */
+    private boolean       nearSrLevel;
+
+    /** The actual S/R price the signal was near (null if not near any level) */
+    private BigDecimal    srLevel;
+
+    /** SUPPORT or RESISTANCE — which side the level was on */
+    private String        srLevelType;
 }

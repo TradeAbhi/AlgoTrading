@@ -73,4 +73,35 @@ public class VolumeBacktestRequest {
      */
     @Builder.Default
     private double slMarginPct = 0.15;
+
+    /**
+     * How many candles to look back when computing swing highs/lows for S/R levels.
+     * Default: 50 candles (~12.5 hours of 15m data).
+     */
+    @Builder.Default
+    private int srLookback = 50;
+
+    /**
+     * Number of candles on EACH SIDE of a pivot that must be lower/higher
+     * for a candle to qualify as a swing high/low.
+     * Default: 3 (standard TradingView pivot setting).
+     */
+    @Builder.Default
+    private int srPivotStrength = 3;
+
+    /**
+     * Signal candle close must be within this % of a swing high/low
+     * to be considered "near a level".
+     * Default: 0.5% — tight enough to be meaningful, loose enough to fire trades.
+     */
+    @Builder.Default
+    private double srProximityPct = 0.5;
+
+    /**
+     * When true, only trades whose signal candle is near a S/R level are taken.
+     * When false (default), S/R proximity is recorded but does NOT filter trades
+     * — useful for comparing with-filter vs without-filter in the same run.
+     */
+    @Builder.Default
+    private boolean srFilterEnabled = true;
 }

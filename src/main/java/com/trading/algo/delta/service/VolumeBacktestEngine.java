@@ -51,11 +51,14 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class VolumeBacktestEngine {
 
-    private static final int  LOOKBACK   = 20;
-    private static final double BODY_RATIO = 0.50;
-    private static final MathContext MC   = MathContext.DECIMAL64;
+    private static final int    LOOKBACK   = 20;
+    private static final double  BODY_RATIO = 0.50;
+    private static final MathContext MC     = MathContext.DECIMAL64;
 
     private final DeltaApiService deltaApiService;
+
+    /** Holds the nearest S/R match for a signal candle — null means no level nearby */
+    private record SrMatch(BigDecimal level, String type) {}
 
     // ─────────────────────────────────────────────────────────────────────────
     // Entry point
@@ -97,17 +100,27 @@ public class VolumeBacktestEngine {
             VolumeSignal.Type type = classify(signal, lookback, ratio, req.getClimaxMultiplier());
             log.debug("{} | {} | type={} | ratio={}", signal.getOpenTime(), req.getSymbol(), type, ratio);
 
+            // ── S/R proximity check ───────────────────────────────────────
+            SrMatch srMatch = findNearestSrLevel(
+                    signal, lookback, req.getSrPivotStrength(), req.getSrProximityPct());
+
+            if (req.isSrFilterEnabled() && srMatch == null) {
+                log.debug("{} | {} | SKIPPED — not near S/R level", signal.getOpenTime(), req.getSymbol());
+                continue;
+            }
+
             VolumeTradeRecord trade = switch (type) {
-                case BREAKOUT   -> buildBreakoutTrade(req, signal, allCandles, i, ratio);
-                case ABSORPTION -> buildAbsorptionTrade(req, signal, allCandles, i, ratio);
-                case CLIMAX     -> buildClimaxTrade(req, signal, allCandles, i, ratio);
+                case BREAKOUT   -> buildBreakoutTrade(req, signal, allCandles, i, ratio, srMatch);
+                case ABSORPTION -> buildAbsorptionTrade(req, signal, allCandles, i, ratio, srMatch);
+                case CLIMAX     -> buildClimaxTrade(req, signal, allCandles, i, ratio, srMatch);
             };
 
             if (trade != null) {
                 trades.add(trade);
-                log.debug("  Trade added: {} {} {} entry={} sl={} target={}",
+                log.debug("  Trade added: {} {} {} entry={} sl={} target={} near={}",
                         type, trade.getDirection(), signal.getOpenTime(),
-                        trade.getEntry(), trade.getStopLoss(), trade.getTarget());
+                        trade.getEntry(), trade.getStopLoss(), trade.getTarget(),
+                        srMatch != null ? srMatch.level() : "none");
             }
         }
 
@@ -141,16 +154,52 @@ public class VolumeBacktestEngine {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Entry builders — one per signal type
+    // S/R level detection — pure price-action swing pivot method
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * BREAKOUT: big volume + big body → trade in the direction of the breakout.
-     * Enter at close of spike candle.
-     * SL: low of spike candle (LONG) or high (SHORT) + slMargin
+     * Left-only pivot: candle[j].high is a swing high if it is strictly greater
+     * than all candles in [j-strength .. j-1]. Same logic for swing lows.
+     * Returns the nearest level within srProximityPct, or null.
      */
+    private SrMatch findNearestSrLevel(Candle signal, List<Candle> lookback,
+                                       int strength, double proximityPct) {
+        BigDecimal close       = signal.getClose();
+        double     proximity   = proximityPct / 100.0;
+        SrMatch    best        = null;
+        double     bestDistPct = Double.MAX_VALUE;
+
+        int n = lookback.size();
+        for (int j = strength; j < n; j++) {
+            Candle c = lookback.get(j);
+
+            boolean isPivotHigh = true;
+            for (int k = j - strength; k < j; k++) {
+                if (lookback.get(k).getHigh().compareTo(c.getHigh()) >= 0) { isPivotHigh = false; break; }
+            }
+            if (isPivotHigh) {
+                double d = close.subtract(c.getHigh()).abs().divide(close, 8, RoundingMode.HALF_UP).doubleValue();
+                if (d <= proximity && d < bestDistPct) { bestDistPct = d; best = new SrMatch(c.getHigh(), "RESISTANCE"); }
+            }
+
+            boolean isPivotLow = true;
+            for (int k = j - strength; k < j; k++) {
+                if (lookback.get(k).getLow().compareTo(c.getLow()) <= 0) { isPivotLow = false; break; }
+            }
+            if (isPivotLow) {
+                double d = close.subtract(c.getLow()).abs().divide(close, 8, RoundingMode.HALF_UP).doubleValue();
+                if (d <= proximity && d < bestDistPct) { bestDistPct = d; best = new SrMatch(c.getLow(), "SUPPORT"); }
+            }
+        }
+        return best;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Entry builders — one per signal type
+    // ─────────────────────────────────────────────────────────────────────────
+
     private VolumeTradeRecord buildBreakoutTrade(VolumeBacktestRequest req, Candle signal,
-                                                  List<Candle> all, int idx, double ratio) {
+                                                  List<Candle> all, int idx, double ratio, SrMatch srMatch) {
         boolean bullish = signal.getClose().compareTo(signal.getOpen()) > 0;
         Direction dir   = bullish ? Direction.LONG : Direction.SHORT;
 
@@ -167,7 +216,7 @@ public class VolumeBacktestEngine {
                 : entry.subtract(risk.multiply(bd(req.getBreakoutRR()), MC), MC);
 
         return simulate(req, signal, dir, VolumeSignal.Type.BREAKOUT, entry, sl, target, risk,
-                bd(ratio), all, idx);
+                bd(ratio), all, idx, srMatch);
     }
 
     /**
@@ -176,7 +225,7 @@ public class VolumeBacktestEngine {
      * Entry at next candle close, SL beyond spike candle extreme.
      */
     private VolumeTradeRecord buildAbsorptionTrade(VolumeBacktestRequest req, Candle signal,
-                                                    List<Candle> all, int idx, double ratio) {
+                                                    List<Candle> all, int idx, double ratio, SrMatch srMatch) {
         // Need at least 1 more candle for confirmation
         if (idx + 1 >= all.size()) return null;
 
@@ -205,7 +254,7 @@ public class VolumeBacktestEngine {
 
         // Simulate from confirmation candle onwards (idx + 2)
         return simulate(req, confirm, dir, VolumeSignal.Type.ABSORPTION, entry, sl, target, risk,
-                bd(ratio), all, idx + 1);
+                bd(ratio), all, idx + 1, srMatch);
     }
 
     /**
@@ -214,7 +263,7 @@ public class VolumeBacktestEngine {
      * SL: extreme of climax candle in trend direction + margin.
      */
     private VolumeTradeRecord buildClimaxTrade(VolumeBacktestRequest req, Candle signal,
-                                                List<Candle> all, int idx, double ratio) {
+                                                List<Candle> all, int idx, double ratio, SrMatch srMatch) {
         // Determine trend direction from the 5 candles before the climax
         int n = idx;
         if (n < 5) return null;
@@ -238,7 +287,7 @@ public class VolumeBacktestEngine {
                 : entry.subtract(risk.multiply(bd(req.getClimaxRR()), MC), MC);
 
         return simulate(req, signal, dir, VolumeSignal.Type.CLIMAX, entry, sl, target, risk,
-                bd(ratio), all, idx);
+                bd(ratio), all, idx, srMatch);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -255,7 +304,8 @@ public class VolumeBacktestEngine {
                                        BigDecimal risk,
                                        BigDecimal volumeRatio,
                                        List<Candle> all,
-                                       int entryIdx) {
+                                       int entryIdx,
+                                       SrMatch srMatch) {
 
         ExitReason   exitReason = ExitReason.OPEN;
         BigDecimal   exitPrice  = null;
@@ -306,6 +356,9 @@ public class VolumeBacktestEngine {
                 .exitReason(exitReason)
                 .exitPrice(exitPrice)
                 .pnlR(pnlR)
+                .nearSrLevel(srMatch != null)
+                .srLevel(srMatch != null ? srMatch.level() : null)
+                .srLevelType(srMatch != null ? srMatch.type() : null)
                 .build();
     }
 

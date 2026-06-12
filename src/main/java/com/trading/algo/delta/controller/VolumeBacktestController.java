@@ -77,7 +77,11 @@ public class VolumeBacktestController {
             @RequestParam(defaultValue = "3.0")  double breakoutRR,
             @RequestParam(defaultValue = "2.0")  double absorptionRR,
             @RequestParam(defaultValue = "2.0")  double climaxRR,
-            @RequestParam(defaultValue = "0.15") double slMarginPct
+            @RequestParam(defaultValue = "0.15") double slMarginPct,
+            @RequestParam(defaultValue = "50")   int    srLookback,
+            @RequestParam(defaultValue = "3")    int    srPivotStrength,
+            @RequestParam(defaultValue = "0.5")  double srProximityPct,
+            @RequestParam(defaultValue = "true") boolean srFilterEnabled
     ) {
         LocalDate effectiveTo   = (to   != null) ? to   : LocalDate.now().minusDays(1);
         LocalDate effectiveFrom = (from != null) ? from : effectiveTo.minusDays(30);
@@ -96,10 +100,11 @@ public class VolumeBacktestController {
         }
 
         String requestId = UUID.randomUUID().toString();
-        log.info("[VOL-BT][{}] symbol={} {} to {} | spike={}x climax={}x risk={}% RR: BO={} AB={} CL={}",
+        log.info("[VOL-BT][{}] symbol={} {} to {} | spike={}x climax={}x risk={}% RR: BO={} AB={} CL={} | SR: lookback={} strength={} proximity={}% filter={}",
                 requestId, symbol, effectiveFrom, effectiveTo,
                 spikeMultiplier, climaxMultiplier, riskPercent,
-                breakoutRR, absorptionRR, climaxRR);
+                breakoutRR, absorptionRR, climaxRR,
+                srLookback, srPivotStrength, srProximityPct, srFilterEnabled);
 
         try {
             VolumeBacktestRequest request = VolumeBacktestRequest.builder()
@@ -113,6 +118,10 @@ public class VolumeBacktestController {
                     .absorptionRR(absorptionRR)
                     .climaxRR(climaxRR)
                     .slMarginPct(slMarginPct)
+                    .srLookback(srLookback)
+                    .srPivotStrength(srPivotStrength)
+                    .srProximityPct(srProximityPct)
+                    .srFilterEnabled(srFilterEnabled)
                     .build();
 
             VolumeBacktestResult result = engine.run(request);

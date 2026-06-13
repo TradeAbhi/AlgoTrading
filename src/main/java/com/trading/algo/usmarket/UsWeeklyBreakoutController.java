@@ -56,6 +56,21 @@ public class UsWeeklyBreakoutController {
     }
 
     /**
+     * Replay the full current week (Mon–Fri) day by day.
+     * Use this when the app was down during the week and daily scans were missed.
+     */
+    @GetMapping("/scan-week")
+    public ResponseEntity<Map<String, Object>> scanWeek() {
+        log.info("[US-WEEKLY] Full week replay triggered via /us-weekly/scan-week");
+        int[] result = scannerService.scanWeek();
+        return ResponseEntity.ok(Map.of(
+                "status",    "done",
+                "buyFired",  result[0],
+                "sellFired", result[1]
+        ));
+    }
+
+    /**
      * Manually trigger one daily scan cycle.
      * Fetches latest daily candle from Yahoo Finance for all tracked tickers.
      */

@@ -53,9 +53,6 @@ public class LiveStrategyAlertService {
     private final TelegramService               telegramService;
     private final BacktestConfig                config;
 
-    // Rate limiter — same CAS token bucket as BacktestRunnerService
-    private final AtomicLong nextAllowedCallNs = new AtomicLong(0);
-
     // =========================================================================
     // Main entry point — called by scheduler at 9:46 and by manual endpoint
     // =========================================================================
@@ -69,9 +66,6 @@ public class LiveStrategyAlertService {
                 .resolveToInstrumentKeyMap(UniverseService.NIFTY_FNO_SYMBOLS);
 
         log.info("Scanning {} F&O symbols for live strategy setups", symbolKeyMap.size());
-
-        // Reset rate limiter
-        nextAllowedCallNs.set(System.nanoTime());
 
         // Thread-safe list to collect all valid setups found
         CopyOnWriteArrayList<BacktestTrade> signals = new CopyOnWriteArrayList<>();
@@ -124,8 +118,6 @@ public class LiveStrategyAlertService {
 
         for (IndexName index : IndexName.values()) {
             try {
-                acquireRateLimit();
-
                 List<Candle> candles = candleService.fetchDayCandles(index.instrumentKey, today);
 
                 if (candles.isEmpty()) {
@@ -156,8 +148,6 @@ public class LiveStrategyAlertService {
                             String.format("%.2f", trade.get().getTarget()));
                 }
 
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
             } catch (Exception e) {
                 log.error("Error scanning index {} live: {}", index.displayName, e.getMessage());
             }
@@ -174,8 +164,6 @@ public class LiveStrategyAlertService {
     private void scanSymbol(String symbol, String instrumentKey, LocalDate today,
                              CopyOnWriteArrayList<BacktestTrade> signals) {
         try {
-            acquireRateLimit();
-
             // Fetch today's 15-min candles — same API as backtest, just with today's date
             List<Candle> candles = candleService.fetchDayCandles(instrumentKey, today);
 
@@ -208,8 +196,6 @@ public class LiveStrategyAlertService {
                         String.format("%.2f", trade.get().getTarget()));
             }
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         } catch (Exception e) {
             log.error("Error scanning {} live: {}", symbol, e.getMessage());
         }
@@ -293,24 +279,5 @@ public class LiveStrategyAlertService {
             t.getRiskPoints(),
             t.getC1WickRatio()
         );
-    }
-
-    // =========================================================================
-    // Rate limiter — same CAS token bucket as BacktestRunnerService
-    // =========================================================================
-
-    private void acquireRateLimit() throws InterruptedException {
-        long minGapNs = TimeUnit.MILLISECONDS.toNanos(1000L / config.getRequestsPerSecond());
-        while (true) {
-            long now      = System.nanoTime();
-            long current  = nextAllowedCallNs.get();
-            long mySlot   = Math.max(current, now);
-            long nextSlot = mySlot + minGapNs;
-            if (nextAllowedCallNs.compareAndSet(current, nextSlot)) {
-                long waitNs = mySlot - System.nanoTime();
-                if (waitNs > 0) Thread.sleep(waitNs / 1_000_000, (int)(waitNs % 1_000_000));
-                return;
-            }
-        }
     }
 }

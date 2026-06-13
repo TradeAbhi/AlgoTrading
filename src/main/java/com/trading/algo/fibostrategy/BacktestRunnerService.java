@@ -6,6 +6,7 @@ import com.trading.algo.dtos.Candle;
 import com.trading.algo.entity.BacktestTrade;
 import com.trading.algo.entity.BacktestTrade.Outcome;
 import com.trading.algo.repo.BacktestTradeRepository;
+import com.trading.algo.service.MarketSentimentService;
 import com.trading.algo.service.UniverseService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
@@ -45,13 +46,7 @@ public class BacktestRunnerService {
     private final OpeningCandleStrategyService   strategy;
     private final BacktestTradeRepository        tradeRepo;
     private final BacktestConfig                 config;
-
-    /**
-     * Tracks the earliest time (nanoTime) the next API call is allowed.
-     * Each thread that acquires a slot pushes this forward by minGapNs.
-     * This guarantees global spacing — not per-thread spacing.
-     */
-    private final AtomicLong nextAllowedCallNs = new AtomicLong(0);
+    private final MarketSentimentService         marketSentimentService;
 
     // =========================================================================
     // Main run
@@ -84,9 +79,6 @@ public class BacktestRunnerService {
         List<LocalDate> tradingDays = getTradingDays(fromDate, toDate);
         log.info("Trading days to process: {}", tradingDays.size());
 
-        // Reset rate limiter for this run
-        nextAllowedCallNs.set(System.nanoTime());
-
         AtomicInteger totalSignals   = new AtomicInteger(0);
         AtomicInteger totalProcessed = new AtomicInteger(0);
 
@@ -108,16 +100,20 @@ public class BacktestRunnerService {
                         .map(BacktestTrade::getSymbol)
                         .collect(java.util.stream.Collectors.toSet());
 
-                // OPTIMIZATION (Batch DB): thread-safe list to collect all trades found this day
-                // OLD: synchronized(tradeRepo) { tradeRepo.save(trade) } — one INSERT per trade, serialised
-                // NEW: collect into CopyOnWriteArrayList, then saveAll() once after all threads finish
+                // Problem 3 — fetch A/D ratio once per day (shared across all symbol threads)
+                double adRatio = fetchAdRatio();
+                log.info("Date {} — A/D ratio={}", date, adRatio);
+
+                // Improvement 10 — track daily losses; reduce risk size after maxDailyLosses
+                java.util.concurrent.atomic.AtomicInteger dayLossCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
                 CopyOnWriteArrayList<BacktestTrade> dayTrades = new CopyOnWriteArrayList<>();
 
                 List<CompletableFuture<Void>> futures = symbolKeyMap.entrySet().stream()
                         .map(entry -> CompletableFuture.runAsync(() ->
                                 processSymbol(entry.getKey(), entry.getValue(), date,
                                         alreadyProcessed, dayTrades,
-                                        totalSignals, totalProcessed), pool))
+                                        totalSignals, totalProcessed, adRatio, dayLossCount), pool))
                         .collect(Collectors.toList());
 
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -147,48 +143,23 @@ public class BacktestRunnerService {
     }
 
     // =========================================================================
-    // Rate limiter — token bucket via CAS on AtomicLong (unchanged)
-    // =========================================================================
-
-    private void acquireRateLimit() throws InterruptedException {
-        long minGapNs = TimeUnit.MILLISECONDS.toNanos(1000L / config.getRequestsPerSecond());
-
-        while (true) {
-            long now      = System.nanoTime();
-            long current  = nextAllowedCallNs.get();
-            long mySlot   = Math.max(current, now);
-            long nextSlot = mySlot + minGapNs;
-
-            if (nextAllowedCallNs.compareAndSet(current, nextSlot)) {
-                long waitNs = mySlot - System.nanoTime();
-                if (waitNs > 0) {
-                    Thread.sleep(waitNs / 1_000_000, (int)(waitNs % 1_000_000));
-                }
-                return;
-            }
-        }
-    }
-
-    // =========================================================================
     // Per-symbol processing
     // =========================================================================
 
     private void processSymbol(String symbol, String instrumentKey, LocalDate date,
-                                // OPTIMIZATION (Remove API loop): replaced existsBySymbolAndTradeDate()
-                                // DB call with O(1) Set lookup — same functionality, no DB hit per symbol
                                 java.util.Set<String> alreadyProcessed,
-                                // OPTIMIZATION (Batch DB): collect trades here, saveAll() after all threads done
                                 CopyOnWriteArrayList<BacktestTrade> dayTrades,
-                                AtomicInteger totalSignals, AtomicInteger totalProcessed) {
+                                AtomicInteger totalSignals, AtomicInteger totalProcessed,
+                                double adRatio,
+                                java.util.concurrent.atomic.AtomicInteger dayLossCount) {
         try {
-            // OPTIMIZATION (Remove API loop): was tradeRepo.existsBySymbolAndTradeDate(symbol, date)
-            // Now O(1) Set.contains() — no DB round-trip per symbol
-            if (alreadyProcessed.contains(symbol)) {
+            if (alreadyProcessed.contains(symbol)) return;
+
+            // Improvement 10 — daily loss cap: stop taking new trades once maxDailyLosses hit
+            if (dayLossCount.get() >= config.getMaxDailyLosses()) {
+                log.info("Date daily loss cap reached ({}) — skipping {}", config.getMaxDailyLosses(), symbol);
                 return;
             }
-
-            // Block until rate limiter grants permission (unchanged)
-            acquireRateLimit();
 
             List<Candle> candles = candleService.fetchDayCandles(instrumentKey, date);
 
@@ -197,26 +168,107 @@ public class BacktestRunnerService {
                 return;
             }
 
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles);
+            // Improvement 10 — reduce risk size if day loss cap is being approached
+            // Full risk until first loss, reduced risk after
+            double riskRupees = dayLossCount.get() > 0
+                    ? config.getFixedRiskRupees() * config.getLossSizeReductionFactor()
+                    : config.getFixedRiskRupees();
+
+            double dailyAtr  = computeAtr(instrumentKey, date);
+            long avgC1Volume = computeAvgC1Volume(instrumentKey, date);
+
+            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees);
 
             if (trade.isPresent()) {
-                // OPTIMIZATION (Batch DB): was synchronized(tradeRepo) { tradeRepo.save(trade) }
-                // Now just add to thread-safe list — actual DB write happens in batch after this date completes
-                dayTrades.add(trade.get());
+                BacktestTrade t = trade.get();
+                dayTrades.add(t);
                 totalSignals.incrementAndGet();
-                log.info("  ✅ {} {} {} → {}  P&L={:.2f}pts",
-                        symbol, date,
-                        trade.get().getDirection(),
-                        trade.get().getOutcome(),
-                        trade.get().getPnlPoints());
+                // Increment day loss counter if this trade was a loss
+                if (t.getOutcome() == com.trading.algo.entity.BacktestTrade.Outcome.SL_HIT) {
+                    dayLossCount.incrementAndGet();
+                }
+                log.info("  ✅ {} {} {} → {}  pnl₹={}",
+                        symbol, date, t.getDirection(), t.getOutcome(),
+                        String.format("%.0f", t.getPnlRupees()));
             }
 
             totalProcessed.incrementAndGet();
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         } catch (Exception e) {
             log.error("Error processing {} on {}: {}", symbol, date, e.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // ATR + A/D helpers
+    // =========================================================================
+
+    /**
+     * Problem 1 — 20-day ATR = avg of daily ranges over last 20 trading days.
+     * Returns 0.0 if data unavailable — strategy skips the ATR filter when 0.
+     */
+    private double computeAtr(String instrumentKey, LocalDate date) {
+        try {
+            LocalDate from = date.minusDays(30);
+            List<Candle> daily = candleService.fetchDailyCandles(instrumentKey, from, date.minusDays(1));
+            if (daily.size() < 5) return 0.0;
+            List<Candle> last20 = daily.subList(Math.max(0, daily.size() - 20), daily.size());
+            return last20.stream().mapToDouble(Candle::range).average().orElse(0.0);
+        } catch (Exception e) {
+            log.debug("ATR computation failed for {}: {}", instrumentKey, e.getMessage());
+            return 0.0;
+        }
+    }
+
+    /**
+     * Problem 2 — 5-day avg volume of the 9:15 candle.
+     * Fetches 15m intraday candles for each of the last 5 trading days,
+     * extracts the 9:15 candle from each, and averages their volumes.
+     * Returns 0 if data unavailable — strategy skips the volume filter when 0.
+     */
+    private long computeAvgC1Volume(String instrumentKey, LocalDate date) {
+        try {
+            java.time.LocalTime c1Time = java.time.LocalTime.of(9, 15);
+            List<LocalDate> lookbackDays = new ArrayList<>();
+            LocalDate d = date.minusDays(1);
+            while (lookbackDays.size() < 5) {
+                if (d.getDayOfWeek() != DayOfWeek.SATURDAY && d.getDayOfWeek() != DayOfWeek.SUNDAY) {
+                    lookbackDays.add(d);
+                }
+                d = d.minusDays(1);
+            }
+            long totalVolume = 0;
+            int  count       = 0;
+            for (LocalDate past : lookbackDays) {
+                List<Candle> candles = candleService.fetchDayCandles(instrumentKey, past);
+                for (Candle c : candles) {
+                    if (c.getTimestamp().toLocalTime().equals(c1Time)) {
+                        totalVolume += c.getVolume();
+                        count++;
+                        break;
+                    }
+                }
+            }
+            return count > 0 ? totalVolume / count : 0;
+        } catch (Exception e) {
+            log.debug("Avg C1 volume computation failed for {}: {}", instrumentKey, e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Problem 3 — fetch live A/D ratio from MarketSentimentService.
+     * Returns -1.0 if unavailable — strategy skips the A/D filter when negative.
+     */
+    private double fetchAdRatio() {
+        try {
+            Map<String, Object> ad = marketSentimentService.fetchAdvanceDeclineData();
+            int advances = (int) ad.getOrDefault("advances", 0);
+            int declines = (int) ad.getOrDefault("declines", 0);
+            return declines > 0 ? (double) advances / declines : (advances > 0 ? 999.0 : -1.0);
+        } catch (Exception e) {
+            log.debug("A/D ratio fetch failed: {}", e.getMessage());
+            return -1.0;
         }
     }
 

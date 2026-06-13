@@ -9,7 +9,6 @@ import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.cookie.BasicCookieStore;
 import org.apache.hc.client5.http.cookie.CookieStore;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.springframework.stereotype.Service;
@@ -107,7 +106,7 @@ public class NseWeekHighService {
             // Hit the NSE home page first to acquire cookies / session headers
             HttpGet homeReq = new HttpGet(NSE_HOME);
             setHeaders(homeReq, "text/html,application/xhtml+xml,*/*");
-            client.execute(homeReq).close();
+            client.execute(homeReq, response -> null);
 
             // small pause to let NSE set cookies/session on their side
             Thread.sleep(2500);
@@ -117,13 +116,10 @@ public class NseWeekHighService {
 
             // retry loop because NSE sometimes returns a transient JSON error
             String body = null;
-            CloseableHttpResponse response = null;
             int attempts = 3;
             for (int i = 1; i <= attempts; i++) {
                 try {
-                    response = client.execute(apiReq);
-                    body = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
-                    response.close();
+                    body = client.execute(apiReq, r -> EntityUtils.toString(r.getEntity(), StandardCharsets.UTF_8));
 
                     JsonNode root = objectMapper.readTree(body);
                     JsonNode dataNode = root.path("data");
@@ -143,8 +139,6 @@ public class NseWeekHighService {
                 } catch (Exception inner) {
                     log.warn("Attempt {}/{} failed while fetching 52-week {}: {}", i, attempts, type, inner.getMessage());
                     if (i < attempts) Thread.sleep(2000L * i);
-                } finally {
-                    try { if (response != null) response.close(); } catch (Exception e) { /* ignore */ }
                 }
             }
 

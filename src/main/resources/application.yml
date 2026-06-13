@@ -8,10 +8,12 @@ orb:
 backtest:
   requests-per-second: 20
   thread-pool-size: 10
-  max-c2-range-percent: 1.41  # Tighten to 1.0 for stricter narrow-range filter
+  max-c2-range-percent: 1.41
   fixed-risk-rupees: 10000
   sl-margin-percent: 0.45
-  # min-wick-ratio: 0.65
+  min-c1-body-pct: 0.3      # Problem 4: C1 body >= 0.3% of open price
+  min-c1-atr-ratio: 0.5    # Problem 1: C1 range >= 0.5x 20-day ATR
+  min-c1-volume-multiplier: 1.5  # Problem 2: C1 volume >= 1.5x 5-day avg 9:15 candle volume
 
 watchlist:
   # Limits per category

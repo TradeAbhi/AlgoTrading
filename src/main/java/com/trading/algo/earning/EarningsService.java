@@ -9,7 +9,6 @@ import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.cookie.BasicCookieStore;
 import org.apache.hc.client5.http.cookie.CookieStore;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.springframework.stereotype.Service;
@@ -40,7 +39,7 @@ public class EarningsService {
             homepageRequest.setHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
             homepageRequest.setHeader("Accept-Language", "en-US,en;q=0.5");
             homepageRequest.setHeader("Connection", "keep-alive");
-            httpClient.execute(homepageRequest);
+            httpClient.execute(homepageRequest, response -> null);
 
             Thread.sleep(2000);
 
@@ -54,8 +53,7 @@ public class EarningsService {
             apiRequest.setHeader("X-Requested-With", "XMLHttpRequest");
             apiRequest.setHeader("Connection", "keep-alive");
 
-            CloseableHttpResponse apiResponse = httpClient.execute(apiRequest);
-            String responseBody = EntityUtils.toString(apiResponse.getEntity());
+            String responseBody = httpClient.execute(apiRequest, r -> EntityUtils.toString(r.getEntity()));
 
             ObjectMapper mapper = new ObjectMapper();
             JsonNode root = mapper.readTree(responseBody);

@@ -2,6 +2,7 @@ package com.trading.algo.upstox;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trading.algo.config.BacktestConfig;
 import com.trading.algo.dtos.Candle;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Fetches 15-minute historical OHLC candles from Upstox v2 API.
@@ -53,15 +55,61 @@ public class UpstoxHistoricalCandleService {
     private final RestTemplate        restTemplate;
     private final UpstoxTokenService  upstoxTokenService;
     private final ObjectMapper        objectMapper;
+    private final BacktestConfig      config;
+
+    /**
+     * Centralized rate limiter — token bucket via CAS on AtomicLong.
+     * Shared across all threads to ensure global rate limiting.
+     */
+    private final AtomicLong nextAllowedCallNs = new AtomicLong(0);
 
     /**
      * Fetches all 15-min candles for a single instrument on a single date.
+     * Includes centralized rate limiting and retry logic with exponential backoff.
      *
      * @param instrumentKey  e.g. "NSE_EQ|INE002A01018"
      * @param date           trading date
      * @return list of Candle objects sorted by timestamp ASC, empty if API fails
      */
     public List<Candle> fetchDayCandles(String instrumentKey, LocalDate date) {
+        int attempt = 0;
+        long backoffMs = config.getInitialBackoffMs();
+
+        while (attempt <= config.getMaxRetries()) {
+            try {
+                acquireRateLimit();
+                List<Candle> result = fetchDayCandlesInternal(instrumentKey, date);
+                if (!result.isEmpty() || attempt == config.getMaxRetries()) {
+                    return result;
+                }
+                log.warn("Empty result for {} on {} — retry {}/{}", instrumentKey, date, attempt + 1, config.getMaxRetries());
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return Collections.emptyList();
+            } catch (HttpClientErrorException.TooManyRequests e) {
+                log.warn("Rate limited by Upstox for {} on {} — retry {}/{} after {}ms",
+                        instrumentKey, date, attempt + 1, config.getMaxRetries(), backoffMs);
+                if (attempt == config.getMaxRetries()) {
+                    log.error("Max retries exceeded for {} on {} — returning empty", instrumentKey, date);
+                    return Collections.emptyList();
+                }
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return Collections.emptyList();
+                }
+                backoffMs *= 2; // Exponential backoff
+            }
+            attempt++;
+        }
+        return Collections.emptyList();
+    }
+
+    /**
+     * Internal method that actually makes the API call without retry logic.
+     */
+    private List<Candle> fetchDayCandlesInternal(String instrumentKey, LocalDate date) {
         // Build URI with build(true) so Spring does NOT double-encode the already-encoded %7C.
         // Passing the raw string to restTemplate.exchange() causes double-encoding:
         //   | -> %7C (our replace) -> %257C (RestTemplate encodes again) -> 400 Bad Request
@@ -111,11 +159,33 @@ public class UpstoxHistoricalCandleService {
             return parseCandles(response.getBody(), instrumentKey, date);
 
         } catch (HttpClientErrorException.TooManyRequests e) {
-            log.warn("Rate limited by Upstox for {} on {} — backing off", instrumentKey, date);
-            return Collections.emptyList();
+            throw e; // Re-throw to trigger retry logic in fetchDayCandles
         } catch (Exception e) {
             log.error("Failed to fetch candles for {} on {}: {}", instrumentKey, date, e.getMessage());
             return Collections.emptyList();
+        }
+    }
+
+    // =========================================================================
+    // Centralized rate limiter
+    // =========================================================================
+
+    private void acquireRateLimit() throws InterruptedException {
+        long minGapNs = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1000L / config.getRequestsPerSecond());
+
+        while (true) {
+            long now      = System.nanoTime();
+            long current  = nextAllowedCallNs.get();
+            long mySlot   = Math.max(current, now);
+            long nextSlot = mySlot + minGapNs;
+
+            if (nextAllowedCallNs.compareAndSet(current, nextSlot)) {
+                long waitNs = mySlot - System.nanoTime();
+                if (waitNs > 0) {
+                    Thread.sleep(waitNs / 1_000_000, (int)(waitNs % 1_000_000));
+                }
+                return;
+            }
         }
     }
 

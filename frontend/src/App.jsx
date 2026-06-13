@@ -4,6 +4,12 @@ import WeeklyBreakout from './components/WeeklyBreakout';
 import IpoScanner from './components/IpoScanner';
 import DeltaScanner from './components/DeltaScanner';
 import Backtest from './components/Backtest';
+import FiboBacktest from './components/FiboBacktest';
+import LiveStrategy from './components/LiveStrategy';
+import MarketSentiment from './components/MarketSentiment';
+import Watchlist from './components/Watchlist';
+import IndexStrength from './components/IndexStrength';
+import MoverAnalysis from './components/MoverAnalysis';
 
 function App() {
   const [activeScanner, setActiveScanner] = useState('us-weekly');
@@ -59,6 +65,60 @@ function App() {
         >
           📈 Backtest
         </button>
+        <button
+          onClick={() => setActiveScanner('fibo-backtest')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'fibo-backtest' ? styles.activeNavButton : {})
+          }}
+        >
+          📊 Fibo Backtest
+        </button>
+        <button
+          onClick={() => setActiveScanner('live-strategy')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'live-strategy' ? styles.activeNavButton : {})
+          }}
+        >
+          🔴 Live Strategy
+        </button>
+        <button
+          onClick={() => setActiveScanner('sentiment')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'sentiment' ? styles.activeNavButton : {})
+          }}
+        >
+          📊 Sentiment
+        </button>
+        <button
+          onClick={() => setActiveScanner('watchlist')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'watchlist' ? styles.activeNavButton : {})
+          }}
+        >
+          📋 Watchlist
+        </button>
+        <button
+          onClick={() => setActiveScanner('index-strength')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'index-strength' ? styles.activeNavButton : {})
+          }}
+        >
+          📈 Index Strength
+        </button>
+        <button
+          onClick={() => setActiveScanner('mover-analysis')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'mover-analysis' ? styles.activeNavButton : {})
+          }}
+        >
+          📊 Mover Analysis
+        </button>
       </div>
 
       {/* Scanner Content */}
@@ -67,6 +127,12 @@ function App() {
       {activeScanner === 'ipo' && <IpoScanner />}
       {activeScanner === 'delta' && <DeltaScanner />}
       {activeScanner === 'backtest' && <Backtest />}
+      {activeScanner === 'fibo-backtest' && <FiboBacktest />}
+      {activeScanner === 'live-strategy' && <LiveStrategy />}
+      {activeScanner === 'sentiment' && <MarketSentiment />}
+      {activeScanner === 'watchlist' && <Watchlist />}
+      {activeScanner === 'index-strength' && <IndexStrength />}
+      {activeScanner === 'mover-analysis' && <MoverAnalysis />}
     </div>
   );
 }

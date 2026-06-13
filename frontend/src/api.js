@@ -202,3 +202,156 @@ export const deltaStatusApi = {
     return response.data;
   }
 };
+
+// Fibo Strategy Backtest API
+const FIBO_BACKTEST_BASE = '/api/backtest';
+
+export const fiboBacktestApi = {
+  run: async (from, to, clearOld = false) => {
+    const response = await axios.post(`${FIBO_BACKTEST_BASE}/run`, null, {
+      params: { from, to, clearOld }
+    });
+    return response.data;
+  },
+
+  getSummary: async (from, to) => {
+    const response = await axios.get(`${FIBO_BACKTEST_BASE}/summary`, {
+      params: { from, to }
+    });
+    return response.data;
+  },
+
+  getTrades: async (params) => {
+    const response = await axios.get(`${FIBO_BACKTEST_BASE}/trades`, { params });
+    return response.data;
+  },
+
+  clear: async (from, to) => {
+    const response = await axios.delete(`${FIBO_BACKTEST_BASE}/clear`, {
+      params: { from, to }
+    });
+    return response.data;
+  }
+};
+
+// Live Strategy API
+const LIVE_STRATEGY_BASE = '/api/live-strategy';
+
+export const liveStrategyApi = {
+  scan: async () => {
+    const response = await axios.post(`${LIVE_STRATEGY_BASE}/scan`);
+    return response.data;
+  }
+};
+
+// Market Sentiment API
+const SENTIMENT_BASE = '/api/sentiment';
+
+export const sentimentApi = {
+  morning: async () => {
+    const response = await axios.get(`${SENTIMENT_BASE}/morning`);
+    return response.data;
+  },
+
+  midday: async () => {
+    const response = await axios.get(`${SENTIMENT_BASE}/midday`);
+    return response.data;
+  },
+
+  preclose: async () => {
+    const response = await axios.get(`${SENTIMENT_BASE}/preclose`);
+    return response.data;
+  },
+
+  eod: async () => {
+    const response = await axios.get(`${SENTIMENT_BASE}/eod`);
+    return response.data;
+  },
+
+  pcrAlert: async () => {
+    const response = await axios.get(`${SENTIMENT_BASE}/pcr-alert`);
+    return response.data;
+  },
+
+  vixAlert: async () => {
+    const response = await axios.get(`${SENTIMENT_BASE}/vix-alert`);
+    return response.data;
+  },
+
+  breadthAlert: async () => {
+    const response = await axios.get(`${SENTIMENT_BASE}/breadth-alert`);
+    return response.data;
+  }
+};
+
+// Watchlist API
+const WATCHLIST_BASE = '/api/watchlist';
+
+export const watchlistApi = {
+  getFull: async () => {
+    const response = await axios.get(`${WATCHLIST_BASE}`);
+    return response.data;
+  },
+
+  alert: async () => {
+    const response = await axios.post(`${WATCHLIST_BASE}/alert`);
+    return response.data;
+  },
+
+  getHighOi: async () => {
+    const response = await axios.get(`${WATCHLIST_BASE}/high-oi`);
+    return response.data;
+  },
+
+  getTopGainers: async () => {
+    const response = await axios.get(`${WATCHLIST_BASE}/top-gainers`);
+    return response.data;
+  },
+
+  getTopLosers: async () => {
+    const response = await axios.get(`${WATCHLIST_BASE}/top-losers`);
+    return response.data;
+  },
+
+  getActiveByValue: async () => {
+    const response = await axios.get(`${WATCHLIST_BASE}/active-by-value`);
+    return response.data;
+  },
+
+  getVolumeShockers: async () => {
+    const response = await axios.get(`${WATCHLIST_BASE}/volume-shockers`);
+    return response.data;
+  },
+
+  getOnlyBuyers: async () => {
+    const response = await axios.get(`${WATCHLIST_BASE}/only-buyers`);
+    return response.data;
+  },
+
+  getOnlySellers: async () => {
+    const response = await axios.get(`${WATCHLIST_BASE}/only-sellers`);
+    return response.data;
+  }
+};
+
+// Index Strength API
+const INDEX_STRENGTH_BASE = '/api/index-strength';
+
+export const indexStrengthApi = {
+  alert: async () => {
+    const response = await axios.post(`${INDEX_STRENGTH_BASE}/alert`);
+    return response.data;
+  }
+};
+
+// Mover Analysis API
+const MOVER_ANALYSIS_BASE = '/api/mover-analysis';
+
+export const moverAnalysisApi = {
+  run: async (date) => {
+    const response = await axios.post(`${MOVER_ANALYSIS_BASE}/run`, null, {
+      params: { date }
+    });
+    return response.data;
+  }
+};

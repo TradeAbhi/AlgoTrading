@@ -1,5 +1,6 @@
 package com.trading.algo.service;
 
+import com.trading.algo.discord.DiscordService;
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
@@ -23,6 +24,7 @@ public class WeekHighWeeklyCloseBreakoutService {
     private final UpstoxInstrumentMasterService instrumentMasterService;
     private final UpstoxHistoricalCandleService candleService;
     private final TelegramService telegramService;
+    private final DiscordService discordService;
 
     @Scheduled(cron = "0 5 16 * * FRI", zone = "Asia/Kolkata")
     public void scheduledScan() {
@@ -159,7 +161,9 @@ public class WeekHighWeeklyCloseBreakoutService {
 
         if (!breakouts.isEmpty()) {
             breakouts.sort(Comparator.comparingDouble(WeeklyCloseBreakout::breakoutPct).reversed());
-            telegramService.sendMessageToInvestmentPicks(buildMessage(breakouts, symbols.size(), skipped));
+            String message = buildMessage(breakouts, symbols.size(), skipped);
+            telegramService.sendMessageToInvestmentPicks(message);
+            discordService.sendMessage(buildDiscordMessage(breakouts));
         }
 
         if (!dailyBreakouts.isEmpty()) {
@@ -174,11 +178,13 @@ public class WeekHighWeeklyCloseBreakoutService {
                         .append(" | Vol: ").append(String.format("%,d", d.volume()))
                         .append("\n");
             }
+            String dailyMessage = sb.toString();
             if (sendDailyToInvestmentPicks) {
-                telegramService.sendMessageToInvestmentPicks(sb.toString());
+                telegramService.sendMessageToInvestmentPicks(dailyMessage);
             } else {
-                telegramService.sendMessage(sb.toString());
+                telegramService.sendMessage(dailyMessage);
             }
+            discordService.sendMessage(buildDailyDiscordMessage(dailyBreakouts));
         }
     }
 
@@ -203,6 +209,24 @@ public class WeekHighWeeklyCloseBreakoutService {
                     .append("\n");
         }
 
+        return sb.toString();
+    }
+
+    private String buildDiscordMessage(List<WeeklyCloseBreakout> breakouts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("52W High Weekly Close Breakouts:\n");
+        for (WeeklyCloseBreakout breakout : breakouts) {
+            sb.append(breakout.symbol()).append("\n");
+        }
+        return sb.toString();
+    }
+
+    private String buildDailyDiscordMessage(List<DailyBreakout> dailyBreakouts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Daily Close > Prev Week High Breakouts:\n");
+        for (DailyBreakout d : dailyBreakouts) {
+            sb.append(d.symbol()).append("\n");
+        }
         return sb.toString();
     }
 

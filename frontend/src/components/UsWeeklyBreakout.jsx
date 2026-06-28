@@ -78,6 +78,18 @@ function UsWeeklyBreakout() {
     setLoading(false);
   };
 
+  const handleScanWeek = async () => {
+    setLoading(true);
+    try {
+      const result = await usWeeklyApi.scanWeek();
+      setMessage(`Week scan completed - Buy alerts: ${result.buyFired}, Sell alerts: ${result.sellFired}`);
+      await loadData();
+    } catch (error) {
+      setMessage('Error scanning week: ' + error.message);
+    }
+    setLoading(false);
+  };
+
   const getDisplayData = () => {
     switch (activeTab) {
       case 'watching': return watching;
@@ -135,6 +147,13 @@ function UsWeeklyBreakout() {
             style={styles.button}
           >
             🔍 Scan
+          </button>
+          <button 
+            onClick={handleScanWeek} 
+            disabled={loading}
+            style={styles.button}
+          >
+            📅 Scan Week
           </button>
           <button 
             onClick={loadData} 

@@ -1,6 +1,7 @@
 package com.trading.algo.delta.service;
 
 import com.trading.algo.delta.model.AlertSignal;
+import com.trading.algo.delta.model.DailyBreakoutAlert;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Value;
@@ -44,6 +45,14 @@ public class TelegramServices {
      */
     public void sendAlert(AlertSignal signal) {
         String message = buildMessage(signal);
+        sendMessage(message);
+    }
+
+    /**
+     * Sends a formatted Telegram message for daily breakout alerts.
+     */
+    public void sendDailyBreakoutAlert(DailyBreakoutAlert alert) {
+        String message = buildDailyBreakoutMessage(alert);
         sendMessage(message);
     }
 
@@ -101,6 +110,36 @@ public class TelegramServices {
                 signal.getLevel().toPlainString(),
                 FMT.format(signal.getCandleCloseTime()),
                 signal.getSymbol().replace("-", "")
+        );
+    }
+
+    private String buildDailyBreakoutMessage(DailyBreakoutAlert alert) {
+        String emoji = alert.getDirection() == DailyBreakoutAlert.Direction.BEARISH_BREAKDOWN ? "🔴" : "🟢";
+        String direction = alert.getDirection() == DailyBreakoutAlert.Direction.BEARISH_BREAKDOWN
+                ? "DAILY BREAKDOWN — SELL SIGNAL 📉"
+                : "DAILY BREAKOUT — BUY SIGNAL 📈";
+        String levelLabel = alert.getDirection() == DailyBreakoutAlert.Direction.BEARISH_BREAKDOWN
+                ? "Reference Low"
+                : "Reference High";
+
+        return String.format("""
+                %s *%s | %s*
+
+                🕯 15m Candle Closed: `%s`
+                📍 %s: `%s`
+                📅 Reference Set On: `%s`
+                ⏰ Candle Close Time: `%s`
+
+                #%s #daily-breakout #futures #alert""",
+                emoji,
+                alert.getSymbol(),
+                direction,
+                alert.getCandleClose().toPlainString(),
+                levelLabel,
+                alert.getReferenceLevel().toPlainString(),
+                alert.getReferenceDate(),
+                FMT.format(alert.getCandleCloseTime()),
+                alert.getSymbol().replace("-", "")
         );
     }
 

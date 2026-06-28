@@ -35,6 +35,7 @@ public class SchedulerService {
     private final NseWeekHighService           nseWeekHighService;
     private final MarketSentimentService       marketSentimentService;
     private final IpoMonitorService            ipoMonitorService;
+    private final com.trading.algo.upstox.PortfolioVolumeScanService portfolioVolumeScanService;
 
     // =========================================================================
     // EARNINGS — fetch & save (DO NOT TOUCH)
@@ -422,6 +423,21 @@ public class SchedulerService {
     @Scheduled(cron = "0 0 8 * * *")
     public void dailyIpoSync() throws Exception {
         ipoService.syncIpos();
+    }
+
+    // =========================================================================
+    // PORTFOLIO VOLUME SCAN — 3:35 PM daily after market close
+    // =========================================================================
+
+    /**
+     * Runs every weekday at 3:35 PM IST after market close.
+     * Scans portfolio holdings for negative close with high volume.
+     * Condition: Candle closes negative AND volume > 20-day average volume
+     */
+    @Scheduled(cron = "0 35 15 * * MON-FRI", zone = "Asia/Kolkata")
+    public void portfolioVolumeScan() {
+        log.info("Portfolio volume scan scheduler fired — 3:35 PM");
+        portfolioVolumeScanService.scanPortfolioForVolumeSpike();
     }
 
     // =========================================================================

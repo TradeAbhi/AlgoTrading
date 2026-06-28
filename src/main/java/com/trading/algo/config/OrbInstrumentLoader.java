@@ -83,6 +83,12 @@ public class OrbInstrumentLoader {
                     continue;
                 }
 
+                // Skip ETFs, Liquid funds, Mutual funds, and basket/index products
+                if (shouldSkipSymbol(symbol)) {
+                    skipped++;
+                    continue;
+                }
+
                 String instrumentKey = "NSE_EQ|" + isin;
                 keyToSymbol.put(instrumentKey, symbol);  // instrumentKey → symbol
                 loaded++;
@@ -117,5 +123,17 @@ public class OrbInstrumentLoader {
         } else {
             return Files.newBufferedReader(Path.of(csvPath));
         }
+    }
+
+    private boolean shouldSkipSymbol(String symbol) {
+        String upperSymbol = symbol.toUpperCase();
+        // Skip ETFs, Liquid funds, Mutual funds, and basket/index products
+        String[] skipKeywords = {"ETF", "LIQUID", "FUND", "INDEX", "BASKET", "MF", "MUTUAL", "GOLD", "SILVER", "BEES", "NIFTY", "BANKNIFTY", "SENSEX"};
+        for (String keyword : skipKeywords) {
+            if (upperSymbol.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -127,11 +127,26 @@ telegram.intraday.bot.token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
 telegram.intraday.chat.id: 780646088
 
 upstox:
+  enabled: true
   access:
     token: eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIyMDQ4NzUiLCJqdGkiOiI2OWNjY2JhMjQxZWU5NzdmYjA2MmRhMTAiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc3NTAyOTE1NCwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzc1MDgwODAwfQ.MPfAyFNOGVrf_SFSfbehiymF2ySvJu8GqD5Qt89dr6Y
   api:
     key: de32ef46-2d03-428c-903c-a82ebb8a7fc4
     secret: 9eiwfmkz4e
+
+zerodha:
+  enabled: false
+  # TODO: Add Zerodha API credentials when implementing
+  # api:
+  #   key: your_api_key
+  #   secret: your_api_secret
+
+dhan:
+  enabled: false
+  # TODO: Add Dhan API credentials when implementing
+  api:
+    key: a42001e2-eb06-44bd-9e9d-7c250ce95298
+  #   secret: your_api_secret
 
 twelvedata:
   api-key: 3f784585013c404186706bf9ba27ef7a
@@ -156,10 +171,34 @@ alert:
   cooldown:
     minutes: 15
 
+daily-breakout:
+  scheduler:
+    alert:
+      cron: "0 0/15 * * * *"    # Check every 15 minutes for 15m candle breakouts
+    reference:
+      refresh:
+        cron: "0 1 0 * * *"      # Check daily candle for reference level update at 00:01 UTC
+  cooldown:
+    minutes: 15
+
 volume:
   scanner:
     spike-multiplier: 2.0    # volume >= 2x avg  → spike
     climax-multiplier: 3.0   # volume >= 3x avg + trending → climax
+portfolio:
+  volume:
+    scan:
+      multiplier: 1.5        # volume >= 1.5x avg → alert for volume spike
+      daily:
+        lookback: 20         # number of daily candles for average
+      weekly:
+        lookback: 20         # number of weekly candles for average
+      monthly:
+        lookback: 20         # number of monthly candles for average
+      min-history-days: 5    # minimum days of history required for new stocks
+  price:
+    movement:
+      threshold: 2.5         # price change >= 2.5% from previous period → alert
 
 logging:
   level:

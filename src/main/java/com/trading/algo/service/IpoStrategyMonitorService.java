@@ -1,5 +1,6 @@
 package com.trading.algo.service;
 
+import com.trading.algo.discord.DiscordService;
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.ipo.Ipo;
 import com.trading.algo.ipo.IpoRepository;
@@ -31,6 +32,7 @@ public class IpoStrategyMonitorService {
     private final UpstoxInstrumentMasterService instrumentMasterService;
     private final UpstoxHistoricalCandleService candleService;
     private final TelegramService telegramService;
+    private final DiscordService discordService;
 
     private final Map<String, LocalDate> lastAlertDateBySignal = new ConcurrentHashMap<>();
 
@@ -42,7 +44,13 @@ public class IpoStrategyMonitorService {
     public void scanAndAlert() {
         LocalDate today = LocalDate.now();
         LocalDate fromListingDate = today.minusDays(IPO_UNIVERSE_DAYS);
+        
+        // Scan only the latest 1 year (365 days) of IPO stocks from the repository
+        // This filters the IPO universe to only recent listings for strategy monitoring
         List<Ipo> ipos = ipoRepository.findByListingDateBetween(fromListingDate, today.minusDays(1));
+        
+        // OLD LOGIC - Scanning all stocks from IPO repository (commented out)
+        // List<Ipo> ipos = ipoRepository.findAll();
 
         if (ipos.isEmpty()) {
             log.info("No past IPOs found for strategy monitoring");
@@ -88,7 +96,9 @@ public class IpoStrategyMonitorService {
          }
 
          freshSignals.forEach(this::markAlertedToday);
-         telegramService.sendMessageToInvestmentPicks(buildMessage(freshSignals, ipos.size(), skipped));
+         String message = buildMessage(freshSignals, ipos.size(), skipped);
+         telegramService.sendMessageToInvestmentPicks(message);
+         discordService.sendMessage(buildDiscordMessage(freshSignals));
      }
 
     private Optional<IpoSignal> evaluate(Ipo ipo, List<WeeklyBar> weeklyBars) {
@@ -273,6 +283,15 @@ public class IpoStrategyMonitorService {
             sb.append(signal.reason()).append("\n\n");
         }
 
+        return sb.toString();
+    }
+
+    private String buildDiscordMessage(List<IpoSignal> signals) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Past IPO Strategy Signals:\n");
+        for (IpoSignal signal : signals) {
+            sb.append(signal.symbol()).append("\n");
+        }
         return sb.toString();
     }
 

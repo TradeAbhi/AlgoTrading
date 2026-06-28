@@ -37,6 +37,11 @@ export const usWeeklyApi = {
   get52WeekHighs: async () => {
     const response = await axios.get(`${US_WEEKLY_BASE}/52wk`);
     return response.data;
+  },
+
+  scanWeek: async () => {
+    const response = await axios.get(`${US_WEEKLY_BASE}/scan-week`);
+    return response.data;
   }
 };
 
@@ -352,6 +357,43 @@ export const moverAnalysisApi = {
     const response = await axios.post(`${MOVER_ANALYSIS_BASE}/run`, null, {
       params: { date }
     });
+    return response.data;
+  }
+};
+
+// Stock Analyzer API
+const STOCK_ANALYZER_BASE = '/api/analysis';
+
+export const stockAnalyzerApi = {
+  analyzeConsolidationBreakout: async (request) => {
+    const response = await axios.post(`${STOCK_ANALYZER_BASE}/consolidation-breakout`, request);
+    return response.data;
+  },
+
+  fetchCandles: async (symbol, timeframe, fromDate, toDate) => {
+    const response = await axios.get(`${STOCK_ANALYZER_BASE}/fetch-candles`, {
+      params: { symbol, timeframe, fromDate, toDate }
+    });
+    return response.data;
+  }
+};
+
+// Portfolio API
+const PORTFOLIO_BASE = '/api/portfolio';
+
+export const portfolioApi = {
+  getHoldings: async () => {
+    const response = await axios.get(`${PORTFOLIO_BASE}/holdings`);
+    return response.data;
+  },
+
+  getHoldingsByBroker: async (broker) => {
+    const response = await axios.get(`${PORTFOLIO_BASE}/holdings/${broker}`);
+    return response.data;
+  },
+
+  triggerVolumeScan: async () => {
+    const response = await axios.post(`${PORTFOLIO_BASE}/volume-scan`);
     return response.data;
   }
 };

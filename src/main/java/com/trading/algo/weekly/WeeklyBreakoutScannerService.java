@@ -1,6 +1,7 @@
 package com.trading.algo.weekly;
 
 import com.trading.algo.config.OrbConfig;
+import com.trading.algo.discord.DiscordService;
 import com.trading.algo.telegram.TelegramService;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -68,15 +69,18 @@ public class WeeklyBreakoutScannerService {
     private final OrbConfig orbConfig;
     private final WeeklyBreakoutStateStore stateStore;
     private final TelegramService telegramService;
+    private final DiscordService discordService;
     private final RestTemplate restTemplate;
 
     public WeeklyBreakoutScannerService(OrbConfig orbConfig,
                                         WeeklyBreakoutStateStore stateStore,
                                         TelegramService telegramService,
+                                        DiscordService discordService,
                                         RestTemplate restTemplate) {
         this.orbConfig       = orbConfig;
         this.stateStore      = stateStore;
         this.telegramService = telegramService;
+        this.discordService  = discordService;
         this.restTemplate    = restTemplate;
     }
 
@@ -336,7 +340,7 @@ public class WeeklyBreakoutScannerService {
                             ? ((close - state.getPrevWeekClose()) / state.getPrevWeekClose()) * 100.0 : 0;
         String niftyTrend = getNiftyWeeklyTrend();
 
-        telegramService.sendMessage(String.format(
+        String message = String.format(
             "🟢 *WEEKLY BUY BREAKOUT*%n" +
             "📌 *%s*%n" +
             "────────────────%n" +
@@ -356,7 +360,10 @@ public class WeeklyBreakoutScannerService {
             state.getPrevWeekClose(), gapFromPrevWeek >= 0 ? "+" : "", gapFromPrevWeek,
             dHigh, dLow,
             volume,
-            niftyTrend));
+            niftyTrend);
+
+        telegramService.sendMessage(message);
+        discordService.sendMessage(state.getSymbol());
 
         log.info("[WEEKLY] 🟢 BUY  {} @ ₹{} | weeklyH ₹{} | SL ₹{} ({}% risk)",
             state.getSymbol(), close, state.getWeeklyHigh(), slLevel,
@@ -373,7 +380,7 @@ public class WeeklyBreakoutScannerService {
                             ? ((close - state.getPrevWeekClose()) / state.getPrevWeekClose()) * 100.0 : 0;
         String niftyTrend = getNiftyWeeklyTrend();
 
-        telegramService.sendMessage(String.format(
+        String message = String.format(
             "🔴 *WEEKLY SELL BREAKDOWN*%n" +
             "📌 *%s*%n" +
             "────────────────%n" +
@@ -393,7 +400,10 @@ public class WeeklyBreakoutScannerService {
             state.getPrevWeekClose(), gapFromPrevWeek >= 0 ? "+" : "", gapFromPrevWeek,
             dHigh, dLow,
             volume,
-            niftyTrend));
+            niftyTrend);
+
+        telegramService.sendMessage(message);
+        discordService.sendMessage(state.getSymbol());
 
         log.info("[WEEKLY] 🔴 SELL {} @ ₹{} | weeklyL ₹{} | SL ₹{} ({}% risk)",
             state.getSymbol(), close, state.getWeeklyLow(), slLevel,

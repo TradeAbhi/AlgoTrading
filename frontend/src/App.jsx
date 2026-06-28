@@ -10,6 +10,9 @@ import MarketSentiment from './components/MarketSentiment';
 import Watchlist from './components/Watchlist';
 import IndexStrength from './components/IndexStrength';
 import MoverAnalysis from './components/MoverAnalysis';
+import StockAnalyzer from './components/StockAnalyzer';
+import Nse52WeekHigh from './components/Nse52WeekHigh';
+import Portfolio from './components/Portfolio';
 
 function App() {
   const [activeScanner, setActiveScanner] = useState('us-weekly');
@@ -37,6 +40,15 @@ function App() {
           }}
         >
           🇮🇳 NSE Weekly Breakout
+        </button>
+        <button
+          onClick={() => setActiveScanner('nse-52week')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'nse-52week' ? styles.activeNavButton : {})
+          }}
+        >
+          📈 NSE 52-Week High
         </button>
         <button
           onClick={() => setActiveScanner('ipo')}
@@ -119,11 +131,30 @@ function App() {
         >
           📊 Mover Analysis
         </button>
+        <button
+          onClick={() => setActiveScanner('stock-analyzer')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'stock-analyzer' ? styles.activeNavButton : {})
+          }}
+        >
+          🔬 Stock Analyzer
+        </button>
+        <button
+          onClick={() => setActiveScanner('portfolio')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'portfolio' ? styles.activeNavButton : {})
+          }}
+        >
+          💼 Portfolio
+        </button>
       </div>
 
       {/* Scanner Content */}
       {activeScanner === 'us-weekly' && <UsWeeklyBreakout />}
       {activeScanner === 'nse-weekly' && <WeeklyBreakout />}
+      {activeScanner === 'nse-52week' && <Nse52WeekHigh />}
       {activeScanner === 'ipo' && <IpoScanner />}
       {activeScanner === 'delta' && <DeltaScanner />}
       {activeScanner === 'backtest' && <Backtest />}
@@ -133,6 +164,8 @@ function App() {
       {activeScanner === 'watchlist' && <Watchlist />}
       {activeScanner === 'index-strength' && <IndexStrength />}
       {activeScanner === 'mover-analysis' && <MoverAnalysis />}
+      {activeScanner === 'stock-analyzer' && <StockAnalyzer />}
+      {activeScanner === 'portfolio' && <Portfolio />}
     </div>
   );
 }

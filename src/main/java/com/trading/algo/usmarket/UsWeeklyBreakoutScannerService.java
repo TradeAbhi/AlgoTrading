@@ -1,5 +1,6 @@
 package com.trading.algo.usmarket;
 
+import com.trading.algo.discord.DiscordService;
 import com.trading.algo.dtos.UsWeeklyBreakoutState;import com.trading.algo.dtos.UsWeeklyBreakoutStateStore;import com.trading.algo.entity.UsCandle;import com.trading.algo.telegram.TelegramService;import jakarta.annotation.PostConstruct;import org.slf4j.Logger;import org.slf4j.LoggerFactory;import org.springframework.scheduling.annotation.Scheduled;import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;import java.io.InputStreamReader;import java.time.DayOfWeek;import java.time.LocalDate;import java.util.ArrayList;import java.util.Collections;import java.util.List;import java.util.Map;import java.util.concurrent.CopyOnWriteArrayList;
@@ -53,13 +54,16 @@ public class UsWeeklyBreakoutScannerService {
     private final UsMarketDataService        marketDataService;
     private final UsWeeklyBreakoutStateStore stateStore;
     private final TelegramService            telegramService;
+    private final DiscordService              discordService;
 
     public UsWeeklyBreakoutScannerService(UsMarketDataService marketDataService,
                                           UsWeeklyBreakoutStateStore stateStore,
-                                          TelegramService telegramService) {
+                                          TelegramService telegramService,
+                                          DiscordService discordService) {
         this.marketDataService = marketDataService;
         this.stateStore        = stateStore;
         this.telegramService   = telegramService;
+        this.discordService    = discordService;
     }
 
     // ── Startup ──────────────────────────────────────────────────────────────
@@ -111,20 +115,34 @@ public class UsWeeklyBreakoutScannerService {
                     continue;
                 }
 
-                UsCandle prevWeek = weekly.get(weekly.size() - 2);
+                // Log all weekly candles to debug the indexing issue
+                log.info("[US-WEEKLY][SEED-DEBUG] {} → Weekly candles ({} total):", ticker, weekly.size());
+                for (int i = 0; i < weekly.size(); i++) {
+                    UsCandle c = weekly.get(i);
+                    log.info("[US-WEEKLY][SEED-DEBUG]   [{}] Date={} High={} Low={} Close={}",
+                            i, c.getDate(), c.getHigh(), c.getLow(), c.getClose());
+                }
+
+                // Skip the last 2 candles (current week + malformed candle) to get the actual previous week
+                UsCandle prevWeek = weekly.get(weekly.size() - 3);
                 double wHigh   = prevWeek.getHigh();
                 double wLow    = prevWeek.getLow();
                 double wOpen   = prevWeek.getOpen();
                 double wClose  = prevWeek.getClose();
                 long   wVolume = prevWeek.getVolume();
+                log.info("[US-WEEKLY][SEED] {} → PrevWeek | High={} Low={} Open={} Close={} Volume={}",
+                        ticker, wHigh, wLow, wOpen, wClose, wVolume);
+                // Filter: weekly range 1.5% – 8%
+                // The core idea here is to find a "sweet spot" for volatility:
+                // - MIN_RANGE_PCT (1.5%): Filters out stocks with very low volatility,
+                //   which often lack momentum for a significant breakout. These might be
+                //   "dead money" or illiquid.
+                // - MAX_RANGE_PCT (8.0%): Filters out stocks that have already made
+                //   very large moves in the previous week. These are considered
+                //   "overextended" and might be due for a pullback or consolidation,
+                //   offering a poor risk-reward for a new breakout entry.
 
-                double rangeWidth = ((wHigh - wLow) / wLow) * 100.0;
-                if (rangeWidth < MIN_RANGE_PCT || rangeWidth > MAX_RANGE_PCT) {
-                    log.info("[US-WEEKLY] {} skipped — range {:.2f}% (allowed {}-{}%)",
-                            ticker, rangeWidth, MIN_RANGE_PCT, MAX_RANGE_PCT);
-                    skipped++;
-                    continue;
-                }
+//                double rangeWidth = ((wHigh - wLow) / wLow) * 100.0;//                if (rangeWidth < MIN_RANGE_PCT || rangeWidth > MAX_RANGE_PCT) {//                    log.info("[US-WEEKLY] {} skipped — range {:.2f}% (allowed {}-{}%)",//                            ticker, rangeWidth, MIN_RANGE_PCT, MAX_RANGE_PCT);//                    skipped++;//                    continue;//                }
 
                 stateStore.put(ticker, UsWeeklyBreakoutState.builder()
                         .ticker(ticker)
@@ -176,6 +194,12 @@ public class UsWeeklyBreakoutScannerService {
             List<UsCandle> daily = dailyBatch.getOrDefault(ticker, Collections.emptyList());
             if (daily.isEmpty()) continue;
 
+            // Calculate current week's close from the latest daily candle
+            // (Yahoo's weekly candles for current week are incomplete/malformed)
+            double currentWeeklyClose = daily.get(daily.size() - 1).getClose();
+            log.info("[US-WEEKLY][WEEKLY-DATA] {} → CurrentWeekClose calculated from daily: {}",
+                    ticker, currentWeeklyClose);
+
             UsCandle today = daily.get(daily.size() - 1);
             double dHigh   = today.getHigh();
             double dLow    = today.getLow();
@@ -183,16 +207,20 @@ public class UsWeeklyBreakoutScannerService {
             long   dVolume = today.getVolume();
             long   avgDVol = state.getWeeklyVolume() / 5;
 
+            log.info("[US-WEEKLY][SCAN] {} → Close={} High={} Low={} | WeeklyHigh={} WeeklyLow={} | CurrentWeeklyClose={}",
+                    ticker, dClose, dHigh, dLow,
+                    state.getWeeklyHigh(), state.getWeeklyLow(), currentWeeklyClose);
+
             if (!state.isBuyAlerted()) {
-                if (dClose > state.getWeeklyHigh()) {
-                    if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
+                if (dClose > state.getWeeklyHigh() && currentWeeklyClose > state.getWeeklyHigh()) {
+              //      if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
                         state.setWeeklyLow(state.getPrevDailyLow());
                         sendBuyAlert(state, today);
                         state.setBuyAlerted(true);
                         buyFired++;
-                    } else {
-                        log.debug("[US-WEEKLY] {} BUY skipped — low volume", ticker);
-                    }
+              //      } else {
+                  //      log.debug("[US-WEEKLY] {} BUY skipped — low volume", ticker);
+                //    }
                 } else if (dHigh > state.getWeeklyHigh()) {
                     state.setWeeklyHigh(dHigh);
                 }
@@ -200,14 +228,14 @@ public class UsWeeklyBreakoutScannerService {
 
             if (!state.isSellAlerted()) {
                 if (dClose < state.getWeeklyLow()) {
-                    if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
+          //          if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
                         state.setWeeklyHigh(state.getPrevDailyHigh());
                         sendSellAlert(state, today);
                         state.setSellAlerted(true);
                         sellFired++;
-                    } else {
-                        log.debug("[US-WEEKLY] {} SELL skipped — low volume", ticker);
-                    }
+            //        } else {
+              //          log.debug("[US-WEEKLY] {} SELL skipped — low volume", ticker);
+                //    }
                 } else if (dLow < state.getWeeklyLow()) {
                     state.setWeeklyLow(dLow);
                 }
@@ -259,6 +287,12 @@ public class UsWeeklyBreakoutScannerService {
             List<UsCandle> daily = dailyBatch.getOrDefault(ticker, Collections.emptyList());
             if (daily.isEmpty()) continue;
 
+            // Calculate current week's close from the latest daily candle
+            // (Yahoo's weekly candles for current week are incomplete/malformed)
+            double currentWeeklyClose = daily.get(daily.size() - 1).getClose();
+            log.info("[US-WEEKLY][WEEKLY-DATA] {} → CurrentWeekClose calculated from daily: {}",
+                    ticker, currentWeeklyClose);
+
             for (LocalDate day : weekDays) {
                 if (state.isBuyAlerted() && state.isSellAlerted()) break;
 
@@ -273,14 +307,18 @@ public class UsWeeklyBreakoutScannerService {
                 long   dVolume = candle.getVolume();
                 long   avgDVol = state.getWeeklyVolume() / 5;
 
+                log.info("[US-WEEKLY][SCAN-WEEK] {} → Date={} Close={} High={} Low={} | WeeklyHigh={} WeeklyLow={} | CurrentWeeklyClose={}",
+                        ticker, candle.getDate(), dClose, dHigh, dLow,
+                        state.getWeeklyHigh(), state.getWeeklyLow(), currentWeeklyClose);
+
                 if (!state.isBuyAlerted()) {
-                    if (dClose > state.getWeeklyHigh()) {
-                        if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
+                    if (dClose > state.getWeeklyHigh() && currentWeeklyClose > state.getWeeklyHigh()) {
+                //        if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
                             state.setWeeklyLow(state.getPrevDailyLow());
                             sendBuyAlert(state, candle);
                             state.setBuyAlerted(true);
                             totalBuy++;
-                        }
+        //                }
                     } else if (dHigh > state.getWeeklyHigh()) {
                         state.setWeeklyHigh(dHigh);
                     }
@@ -288,12 +326,12 @@ public class UsWeeklyBreakoutScannerService {
 
                 if (!state.isSellAlerted()) {
                     if (dClose < state.getWeeklyLow()) {
-                        if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
+             //           if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
                             state.setWeeklyHigh(state.getPrevDailyHigh());
                             sendSellAlert(state, candle);
                             state.setSellAlerted(true);
                             totalSell++;
-                        }
+      //                  }
                     } else if (dLow < state.getWeeklyLow()) {
                         state.setWeeklyLow(dLow);
                     }
@@ -352,7 +390,7 @@ public class UsWeeklyBreakoutScannerService {
         double prevWkChg = state.getPrevWeekClose() > 0
                 ? ((close - state.getPrevWeekClose()) / state.getPrevWeekClose()) * 100.0 : 0;
 
-        telegramService.sendMessage(String.format(
+        String message = String.format(
                 "🇺🇸🟢 *US WEEKLY BUY BREAKOUT*%n" +
                         "📌 *%s*%n" +
                         "────────────────%n" +
@@ -372,7 +410,10 @@ public class UsWeeklyBreakoutScannerService {
                 state.getPrevWeekClose(), prevWkChg >= 0 ? "+" : "", prevWkChg,
                 candle.getHigh(), candle.getLow(),
                 candle.getVolume(),
-                candle.getDate()));
+                candle.getDate());
+
+        telegramService.sendMessage(message);
+        discordService.sendMessage(state.getTicker());
 
         log.info("[US-WEEKLY] 🟢 BUY  {} @ ${} | weeklyH ${} | SL ${} ({}% risk)",
                 state.getTicker(), close, state.getWeeklyHigh(), slLevel,
@@ -388,7 +429,7 @@ public class UsWeeklyBreakoutScannerService {
         double prevWkChg = state.getPrevWeekClose() > 0
                 ? ((close - state.getPrevWeekClose()) / state.getPrevWeekClose()) * 100.0 : 0;
 
-        telegramService.sendMessage(String.format(
+        String message = String.format(
                 "🇺🇸🔴 *US WEEKLY SELL BREAKDOWN*%n" +
                         "📌 *%s*%n" +
                         "────────────────%n" +
@@ -407,7 +448,10 @@ public class UsWeeklyBreakoutScannerService {
                 state.getPrevWeekClose(), prevWkChg >= 0 ? "+" : "", prevWkChg,
                 candle.getHigh(), candle.getLow(),
                 candle.getVolume(),
-                candle.getDate()));
+                candle.getDate());
+
+        telegramService.sendMessage(message);
+        discordService.sendMessage(state.getTicker());
 
         log.info("[US-WEEKLY] 🔴 SELL {} @ ${} | weeklyL ${} | SL ${} ({}% risk)",
                 state.getTicker(), close, state.getWeeklyLow(), slLevel,

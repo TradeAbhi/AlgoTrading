@@ -1,8 +1,10 @@
 package com.trading.algo.ipo;
 
+import com.trading.algo.discord.DiscordService;
 import com.trading.algo.service.IpoMonitorService;
 import com.trading.algo.service.IpoService;
 import com.trading.algo.service.IpoStrategyMonitorService;
+import com.trading.algo.telegram.TelegramService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -36,6 +38,8 @@ public class IpoController {
     private final IpoRepository       ipoRepository;
     private final IpoCsvImportService ipoCsvImportService;
     private final IpoStrategyMonitorService ipoStrategyMonitorService;
+    private final TelegramService    telegramService;
+    private final DiscordService     discordService;
 
     /**
      * POST /api/ipo/upload-csv
@@ -124,5 +128,21 @@ public class IpoController {
                 java.time.LocalDate.now().minusDays(1)
             )
         );
+    }
+
+    /** Send reminder to upload NSE IPO CSV file */
+    @PostMapping("/csv-upload-reminder")
+    public ResponseEntity<Map<String, String>> csvUploadReminder() {
+        log.info("POST /api/ipo/csv-upload-reminder");
+        String message = "*IPO CSV Upload Reminder*\n\n" +
+                "Please download the latest IPO CSV from NSE and upload it to keep the IPO database updated:\n\n" +
+                "📥 Download: https://www.nseindia.com/market-data/all-upcoming-issues-ipo\n\n" +
+                "Then upload via:\n" +
+                "POST http://localhost:8080/api/ipo/upload-csv\n" +
+                "curl -X POST http://localhost:8080/api/ipo/upload-csv -F \"file=@/path/to/ipo_list.csv\"";
+        
+        telegramService.sendMessage(message);
+        discordService.sendMessage(message);
+        return ResponseEntity.ok(Map.of("status", "CSV upload reminder sent"));
     }
 }

@@ -60,11 +60,23 @@ public class NseWeekHighService {
         for (JsonNode row : dataNode) {
             String symbol = row.path("symbol").asText("").trim().toUpperCase();
             String series = row.path("series").asText("").trim().toUpperCase();
-            if (!symbol.isBlank() && ("EQ".equals(series) || series.isBlank())) {
+            if (!symbol.isBlank() && "EQ".equals(series) && !shouldSkipSymbol(symbol)) {
                 symbols.add(symbol);
             }
         }
         return symbols;
+    }
+
+    private boolean shouldSkipSymbol(String symbol) {
+        String upperSymbol = symbol.toUpperCase();
+        // Skip ETFs, Liquid funds, Mutual funds, and basket/index products
+        String[] skipKeywords = {"ETF", "LIQUID", "FUND", "INDEX", "BASKET", "MF", "MUTUAL", "GOLD", "SILVER", "BEES", "NIFTY", "BANKNIFTY", "SENSEX"};
+        for (String keyword : skipKeywords) {
+            if (upperSymbol.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private int fetchAndSend(String type, String apiUrl) {
@@ -222,10 +234,13 @@ public class NseWeekHighService {
 
             String[] headers = header.split(",");
             int symIdx = 0;
+            int seriesIdx = -1;
             for (int i = 0; i < headers.length; i++) {
                 if (headers[i].toLowerCase().contains("symbol")) {
                     symIdx = i;
-                    break;
+                }
+                if (headers[i].toLowerCase().contains("series")) {
+                    seriesIdx = i;
                 }
             }
 
@@ -235,7 +250,14 @@ public class NseWeekHighService {
                 String[] cols = line.split(",");
                 if (cols.length > symIdx) {
                     String s = cols[symIdx].replaceAll("\"", "").trim().toUpperCase();
-                    if (!s.isBlank()) symbols.add(s);
+                    String series = "";
+                    if (seriesIdx >= 0 && cols.length > seriesIdx) {
+                        series = cols[seriesIdx].replaceAll("\"", "").trim().toUpperCase();
+                    }
+                    // Skip ST and SM series, and skip ETFs/funds/index products
+                    if (!s.isBlank() && "EQ".equals(series) && !shouldSkipSymbol(s)) {
+                        symbols.add(s);
+                    }
                 }
             }
         } catch (Exception e) {

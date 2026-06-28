@@ -18,6 +18,10 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * Fetches US market data from Yahoo Finance chart API.
@@ -42,9 +46,10 @@ public class YahooFinanceService {
     private static final ZoneId NY_ZONE    = ZoneId.of("America/New_York");
 
     // Small courtesy delay between calls to avoid IP throttling (not a hard limit)
-    private static final long COURTESY_DELAY_MS = 200L;
+    private static final long COURTESY_DELAY_MS = 50L;
 
     private final RestTemplate restTemplate;
+    private final ExecutorService executorService = Executors.newFixedThreadPool(10);
 
     public YahooFinanceService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
@@ -52,8 +57,8 @@ public class YahooFinanceService {
 
     // ── Batch fetch — weekly ──────────────────────────────────────────────────
     /**
-     * Fetches weekly candles for all tickers sequentially.
-     * ~200ms per ticker → 239 tickers ≈ 48 seconds total.
+     * Fetches weekly candles for all tickers in parallel.
+     * ~50ms per ticker with 10 threads → 44 tickers ≈ 5-10 seconds total.
      */
     public Map<String, List<UsCandle>> fetchWeeklyBatch(List<String> tickers, int weeks) {
         Map<String, List<UsCandle>> result = new HashMap<>();
@@ -61,48 +66,66 @@ public class YahooFinanceService {
 
         // Yahoo range: weeks × 7 days, rounded up to nearest supported range
         String range = weeksToRange(weeks);
-        log.info("[YAHOO] fetchWeeklyBatch: {} tickers, range={}", tickers.size(), range);
+        log.info("[YAHOO] fetchWeeklyBatch: {} tickers, range={} (parallel)", tickers.size(), range);
 
-        for (String ticker : tickers) {
-            try {
-                Thread.sleep(COURTESY_DELAY_MS);
-                List<UsCandle> candles = fetchYahoo(ticker, "1wk", range);
-                if (!candles.isEmpty()) result.put(ticker, candles);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                break;
-            } catch (Exception e) {
-                log.warn("[YAHOO] fetchWeeklyBatch failed for {}: {}", ticker, e.getMessage());
-            }
-        }
+        List<CompletableFuture<Void>> futures = tickers.stream()
+                .map(ticker -> CompletableFuture.runAsync(() -> {
+                    try {
+                        Thread.sleep(COURTESY_DELAY_MS);
+                        List<UsCandle> candles = fetchYahoo(ticker, "1wk", range);
+                        if (!candles.isEmpty()) {
+                            synchronized (result) {
+                                result.put(ticker, candles);
+                            }
+                        }
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    } catch (Exception e) {
+                        log.warn("[YAHOO] fetchWeeklyBatch failed for {}: {}", ticker, e.getMessage());
+                    }
+                }, executorService))
+                .collect(Collectors.toList());
+
+        // Wait for all futures to complete
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
         log.info("[YAHOO] fetchWeeklyBatch done: {}/{} tickers fetched", result.size(), tickers.size());
         return result;
     }
 
     // ── Batch fetch — daily ───────────────────────────────────────────────────
     /**
-     * Fetches daily candles for all tickers sequentially.
-     * ~200ms per ticker → 239 tickers ≈ 48 seconds total.
+     * Fetches daily candles for all tickers in parallel.
+     * ~50ms per ticker with 10 threads → 44 tickers ≈ 5-10 seconds total.
      */
     public Map<String, List<UsCandle>> fetchDailyBatch(List<String> tickers, int days) {
         Map<String, List<UsCandle>> result = new HashMap<>();
         if (tickers.isEmpty()) return result;
 
         String range = daysToRange(days);
-        log.info("[YAHOO] fetchDailyBatch: {} tickers, range={}", tickers.size(), range);
+        log.info("[YAHOO] fetchDailyBatch: {} tickers, range={} (parallel)", tickers.size(), range);
 
-        for (String ticker : tickers) {
-            try {
-                Thread.sleep(COURTESY_DELAY_MS);
-                List<UsCandle> candles = fetchYahoo(ticker, "1d", range);
-                if (!candles.isEmpty()) result.put(ticker, candles);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                break;
-            } catch (Exception e) {
-                log.warn("[YAHOO] fetchDailyBatch failed for {}: {}", ticker, e.getMessage());
-            }
-        }
+        List<CompletableFuture<Void>> futures = tickers.stream()
+                .map(ticker -> CompletableFuture.runAsync(() -> {
+                    try {
+                        Thread.sleep(COURTESY_DELAY_MS);
+                        List<UsCandle> candles = fetchYahoo(ticker, "1d", range);
+                        if (!candles.isEmpty()) {
+                            synchronized (result) {
+                                result.put(ticker, candles);
+                            }
+                        }
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    } catch (Exception e) {
+                        log.warn("[YAHOO] fetchDailyBatch failed for {}: {}", ticker, e.getMessage());
+                    }
+                }, executorService))
+                .collect(Collectors.toList());
+
+        // Wait for all futures to complete
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
         log.info("[YAHOO] fetchDailyBatch done: {}/{} tickers fetched", result.size(), tickers.size());
         return result;
     }

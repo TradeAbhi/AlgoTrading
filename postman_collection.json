@@ -17,9 +17,14 @@
             "url": {
               "raw": "http://localhost:8080/weekly/capture",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["weekly", "capture"]
+              "path": [
+                "weekly",
+                "capture"
+              ]
             },
             "description": "Seed previous week's high/low for all symbols. Equivalent to Monday 9:31 AM scheduler."
           },
@@ -33,9 +38,14 @@
             "url": {
               "raw": "http://localhost:8080/weekly/scan",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["weekly", "scan"]
+              "path": [
+                "weekly",
+                "scan"
+              ]
             },
             "description": "Manually trigger one daily scan cycle. Equivalent to 3:31 PM scheduler. Sends alerts to Investment_picks_bot."
           },
@@ -49,9 +59,14 @@
             "url": {
               "raw": "http://localhost:8080/weekly/state",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["weekly", "state"]
+              "path": [
+                "weekly",
+                "state"
+              ]
             },
             "description": "View current weekly breakout state for all seeded symbols. Shows weeklyHigh, weeklyLow, prevDailyLow/High, and alert flags."
           },
@@ -65,9 +80,14 @@
             "url": {
               "raw": "http://localhost:8080/weekly/watching",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["weekly", "watching"]
+              "path": [
+                "weekly",
+                "watching"
+              ]
             },
             "description": "View only symbols still being watched (not yet alerted on both buy and sell sides)."
           },
@@ -81,9 +101,14 @@
             "url": {
               "raw": "http://localhost:8080/weekly/alerted",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["weekly", "alerted"]
+              "path": [
+                "weekly",
+                "alerted"
+              ]
             },
             "description": "View symbols that have already triggered at least one side (buy or sell) this week."
           },
@@ -102,9 +127,15 @@
             "url": {
               "raw": "http://localhost:8080/api/nse/52-week-high",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "nse", "52-week-high"]
+              "path": [
+                "api",
+                "nse",
+                "52-week-high"
+              ]
             },
             "description": "Fetches today's 52-week high stocks from NSE and sends CSV to Telegram. Runs automatically at 3:35 PM Friday."
           },
@@ -118,9 +149,15 @@
             "url": {
               "raw": "http://localhost:8080/api/nse/52-week-low",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "nse", "52-week-low"]
+              "path": [
+                "api",
+                "nse",
+                "52-week-low"
+              ]
             },
             "description": "Fetches today's 52-week low stocks from NSE and sends CSV to Telegram."
           },
@@ -134,9 +171,15 @@
             "url": {
               "raw": "http://localhost:8080/api/nse/52-week-both",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "nse", "52-week-both"]
+              "path": [
+                "api",
+                "nse",
+                "52-week-both"
+              ]
             },
             "description": "Sends both 52-week high and low CSVs to Telegram in one call."
           },
@@ -150,9 +193,16 @@
             "url": {
               "raw": "http://localhost:8080/api/nse/52-week-high/weekly-close-breakout",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "nse", "52-week-high", "weekly-close-breakout"]
+              "path": [
+                "api",
+                "nse",
+                "52-week-high",
+                "weekly-close-breakout"
+              ]
             },
             "description": "Scans all NSE symbols for weekly close breakout (current weekly close > previous weekly high). Sends alerts to Investment_picks_bot."
           },
@@ -166,9 +216,15 @@
             "url": {
               "raw": "http://localhost:8080/api/nse/upload-52-week",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "nse", "upload-52-week"]
+              "path": [
+                "api",
+                "nse",
+                "upload-52-week"
+              ]
             },
             "description": "Upload an NSE CSV (52-week highs format) and run weekly/daily filters against the uploaded symbols. Checks both weekly close breakout and daily breakout rules. Alerts go to Investment_picks_bot.\n\nUsage: curl -F \"file=@C:\\path\\to\\52_week_highs.csv\" http://localhost:8080/api/nse/upload-52-week"
           },
@@ -187,9 +243,15 @@
             "url": {
               "raw": "http://localhost:8080/api/nse/debug-candles?symbol=ACUTAAS",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "nse", "debug-candles"],
+              "path": [
+                "api",
+                "nse",
+                "debug-candles"
+              ],
               "query": [
                 {
                   "key": "symbol",
@@ -215,9 +277,15 @@
             "url": {
               "raw": "http://localhost:8080/api/ipo/sync",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "ipo", "sync"]
+              "path": [
+                "api",
+                "ipo",
+                "sync"
+              ]
             },
             "description": "Sync latest IPOs from ipoalerts.in into the database. Runs automatically at 8:00 AM daily."
           },
@@ -231,9 +299,15 @@
             "url": {
               "raw": "http://localhost:8080/api/ipo/upload-csv",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "ipo", "upload-csv"]
+              "path": [
+                "api",
+                "ipo",
+                "upload-csv"
+              ]
             },
             "description": "Upload the NSE IPO CSV file — imports EQ-type IPOs only. Safe to re-upload same file (upsert by company name).\n\nHow to get the CSV:\nNSE website → Market Data → IPO → Download (.csv)\nURL: https://www.nseindia.com/market-data/all-upcoming-issues-ipo\n\nUsage: curl -X POST http://localhost:8080/api/ipo/upload-csv -F \"file=@/path/to/ipo_list.csv\""
           },
@@ -247,9 +321,15 @@
             "url": {
               "raw": "http://localhost:8080/api/ipo/all",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "ipo", "all"]
+              "path": [
+                "api",
+                "ipo",
+                "all"
+              ]
             },
             "description": "Get all IPOs stored in database."
           },
@@ -263,9 +343,15 @@
             "url": {
               "raw": "http://localhost:8080/api/ipo/upcoming",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "ipo", "upcoming"]
+              "path": [
+                "api",
+                "ipo",
+                "upcoming"
+              ]
             },
             "description": "Get upcoming listings (listing date >= today). Sorted by listing date."
           },
@@ -279,9 +365,15 @@
             "url": {
               "raw": "http://localhost:8080/api/ipo/listing-open-alert",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "ipo", "listing-open-alert"]
+              "path": [
+                "api",
+                "ipo",
+                "listing-open-alert"
+              ]
             },
             "description": "Send listing open performance alert for today's listings to Investment_picks_bot. Runs automatically at 9:30 AM on listing day."
           },
@@ -295,9 +387,15 @@
             "url": {
               "raw": "http://localhost:8080/api/ipo/listing-eod-alert",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "ipo", "listing-eod-alert"]
+              "path": [
+                "api",
+                "ipo",
+                "listing-eod-alert"
+              ]
             },
             "description": "Send EOD (end-of-day) performance alert for today's listings to Investment_picks_bot. Runs automatically at 3:35 PM on listing day."
           },
@@ -311,9 +409,15 @@
             "url": {
               "raw": "http://localhost:8080/api/ipo/upcoming-summary",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "ipo", "upcoming-summary"]
+              "path": [
+                "api",
+                "ipo",
+                "upcoming-summary"
+              ]
             },
             "description": "Send upcoming listings summary (next 14 days) to Investment_picks_bot."
           },
@@ -327,9 +431,15 @@
             "url": {
               "raw": "http://localhost:8080/api/ipo/strategy-scan",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["api", "ipo", "strategy-scan"]
+              "path": [
+                "api",
+                "ipo",
+                "strategy-scan"
+              ]
             },
             "description": "Scan past IPOs from the last 1 year for weekly breakout, reversal breakout, and breakdown signals. Alerts go to Investment_picks_bot."
           },
@@ -348,9 +458,14 @@
             "url": {
               "raw": "http://localhost:8080/us-weekly/capture",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["us-weekly", "capture"]
+              "path": [
+                "us-weekly",
+                "capture"
+              ]
             },
             "description": "Seed Finviz 52-week high list + Yahoo Finance weekly data for US stocks. Equivalent to Monday 6:00 AM IST scheduler."
           },
@@ -364,9 +479,14 @@
             "url": {
               "raw": "http://localhost:8080/us-weekly/scan",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["us-weekly", "scan"]
+              "path": [
+                "us-weekly",
+                "scan"
+              ]
             },
             "description": "Manually trigger one daily scan cycle. Fetches latest daily candle from Yahoo Finance for all tracked US tickers."
           },
@@ -380,9 +500,14 @@
             "url": {
               "raw": "http://localhost:8080/us-weekly/state",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["us-weekly", "state"]
+              "path": [
+                "us-weekly",
+                "state"
+              ]
             },
             "description": "View current state for all seeded US tickers. Shows weeklyHigh, weeklyLow, buy/sell alert flags, and 52-week high flag."
           },
@@ -396,9 +521,14 @@
             "url": {
               "raw": "http://localhost:8080/us-weekly/watching",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["us-weekly", "watching"]
+              "path": [
+                "us-weekly",
+                "watching"
+              ]
             },
             "description": "View only US tickers still being watched (not yet alerted on both sides)."
           },
@@ -412,9 +542,14 @@
             "url": {
               "raw": "http://localhost:8080/us-weekly/alerted",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["us-weekly", "alerted"]
+              "path": [
+                "us-weekly",
+                "alerted"
+              ]
             },
             "description": "View US tickers that already triggered at least one side (buy or sell) this week."
           },
@@ -428,9 +563,14 @@
             "url": {
               "raw": "http://localhost:8080/us-weekly/52wk",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["us-weekly", "52wk"]
+              "path": [
+                "us-weekly",
+                "52wk"
+              ]
             },
             "description": "View only US tickers sourced from the Finviz 52-week high list. These are the highest conviction BUY setups."
           },
@@ -449,9 +589,15 @@
             "url": {
               "raw": "http://localhost:8080/test/ipo/sync",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["test", "ipo", "sync"]
+              "path": [
+                "test",
+                "ipo",
+                "sync"
+              ]
             },
             "description": "Test endpoint to manually sync IPOs."
           },
@@ -465,11 +611,1659 @@
             "url": {
               "raw": "http://localhost:8080/test/ipo/trigger-alerts",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8080",
-              "path": ["test", "ipo", "trigger-alerts"]
+              "path": [
+                "test",
+                "ipo",
+                "trigger-alerts"
+              ]
             },
             "description": "Test endpoint to manually trigger all IPO alerts."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Earnings & Scheduler (REST)",
+      "item": [
+        {
+          "name": "Trigger Weekly Summary (Earnings)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/earnings-alerts/weekly-summary",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "earnings-alerts",
+                "weekly-summary"
+              ]
+            },
+            "description": "Manual trigger for the weekly F&O earnings summary (same as Monday 8:00 AM scheduler)."
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger Earnings Window (Pre-10 / Post-3)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/earnings-alerts/window",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "earnings-alerts",
+                "window"
+              ]
+            },
+            "description": "Send the full earnings window (PRE_EARNINGS next 10 days + POST_EARNINGS last 3 days) to Telegram. Saves snapshot used by /api/earnings-watchlist/diff."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Active Earnings Watchlist",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/earnings-watchlist",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "earnings-watchlist"
+              ]
+            },
+            "description": "Returns all active (PRE + POST) F&O stocks in the earnings observation window, sorted by result date."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Pre-Earnings (next 10 days)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/earnings-watchlist/pre",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "earnings-watchlist",
+                "pre"
+              ]
+            },
+            "description": "Returns only PRE_EARNINGS stocks (result within next 10 days)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Post-Earnings (last 3 days)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/earnings-watchlist/post",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "earnings-watchlist",
+                "post"
+              ]
+            },
+            "description": "Returns only POST_EARNINGS stocks (result happened in last 3 days)."
+          },
+          "response": []
+        },
+        {
+          "name": "Manual Sync Earnings Watchlist",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/earnings-watchlist/sync",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "earnings-watchlist",
+                "sync"
+              ]
+            },
+            "description": "Manually trigger a full sync of the earnings watchlist (expire stale, transition phases, ingest new). Returns number of new entries added."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Earnings Watchlist Diff",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/earnings-watchlist/diff?notify=false",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "earnings-watchlist",
+                "diff"
+              ],
+              "query": [
+                {
+                  "key": "notify",
+                  "value": "false",
+                  "description": "Optional. Set to true to also send the diff as a Telegram message."
+                }
+              ]
+            },
+            "description": "Compares the current active earnings window against the last snapshot sent and returns toAdd/toRemove/unchanged. Add ?notify=true to also send the diff to Telegram."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Watchlist / Momentum",
+      "item": [
+        {
+          "name": "Get Full Watchlist",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist"
+              ]
+            },
+            "description": "Returns all 7 live watchlist categories."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Watchlist Telegram Alert",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist/alert",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist",
+                "alert"
+              ]
+            },
+            "description": "Manually sends the consolidated live watchlist Telegram message."
+          },
+          "response": []
+        },
+        {
+          "name": "Get High OI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist/high-oi",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist",
+                "high-oi"
+              ]
+            },
+            "description": "Returns high open-interest stocks."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Top Gainers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist/top-gainers",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist",
+                "top-gainers"
+              ]
+            },
+            "description": "Returns live top gainers."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Top Losers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist/top-losers",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist",
+                "top-losers"
+              ]
+            },
+            "description": "Returns live top losers."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Active by Value",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist/active-by-value",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist",
+                "active-by-value"
+              ]
+            },
+            "description": "Returns stocks sorted by traded value."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Volume Shockers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist/volume-shockers",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist",
+                "volume-shockers"
+              ]
+            },
+            "description": "Returns stocks with unusual volume."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Only Buyers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist/only-buyers",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist",
+                "only-buyers"
+              ]
+            },
+            "description": "Returns only-buyer candidates."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Only Sellers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/watchlist/only-sellers",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "watchlist",
+                "only-sellers"
+              ]
+            },
+            "description": "Returns only-seller candidates."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Market Sentiment",
+      "item": [
+        {
+          "name": "Morning Sentiment Snapshot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/sentiment/morning",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "sentiment",
+                "morning"
+              ]
+            },
+            "description": "Triggers morning market sentiment Telegram snapshot."
+          },
+          "response": []
+        },
+        {
+          "name": "Midday Sentiment Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/sentiment/midday",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "sentiment",
+                "midday"
+              ]
+            },
+            "description": "Triggers midday sentiment check."
+          },
+          "response": []
+        },
+        {
+          "name": "Pre-Close Sentiment Alert",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/sentiment/preclose",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "sentiment",
+                "preclose"
+              ]
+            },
+            "description": "Triggers pre-close sentiment alert."
+          },
+          "response": []
+        },
+        {
+          "name": "EOD Sentiment Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/sentiment/eod",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "sentiment",
+                "eod"
+              ]
+            },
+            "description": "Triggers end-of-day sentiment summary."
+          },
+          "response": []
+        },
+        {
+          "name": "PCR Extreme Alert Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/sentiment/pcr-alert",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "sentiment",
+                "pcr-alert"
+              ]
+            },
+            "description": "Checks PCR extremes and sends alert if needed."
+          },
+          "response": []
+        },
+        {
+          "name": "VIX Spike Alert Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/sentiment/vix-alert",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "sentiment",
+                "vix-alert"
+              ]
+            },
+            "description": "Checks VIX spike and sends alert if needed."
+          },
+          "response": []
+        },
+        {
+          "name": "Breadth Extreme Alert Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/sentiment/breadth-alert",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "sentiment",
+                "breadth-alert"
+              ]
+            },
+            "description": "Checks market breadth extremes and sends alert if needed."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Mover & Index Strength",
+      "item": [
+        {
+          "name": "Run Mover Analysis",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/mover-analysis/run?date=2026-06-06",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "mover-analysis",
+                "run"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "2026-06-06"
+                }
+              ]
+            },
+            "description": "Runs mover characteristics analysis. Date is optional; omit date to use today."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Index Strength Alert",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/index-strength/alert",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "index-strength",
+                "alert"
+              ]
+            },
+            "description": "Scans all configured indices and sends Telegram index strength alert."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Live Strategy",
+      "item": [
+        {
+          "name": "Run Live Opening Candle Scan",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/live-strategy/scan",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "live-strategy",
+                "scan"
+              ]
+            },
+            "description": "Manually triggers live Opening Candle Strategy scan and Telegram alerts."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Backtests - Stocks",
+      "item": [
+        {
+          "name": "Run Stock Backtest",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/backtest/run?from=2024-01-01&to=2024-01-31&clearOld=false",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "backtest",
+                "run"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                },
+                {
+                  "key": "clearOld",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Runs Opening Candle Strategy backtest across F&O stocks."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Stock Backtest Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/backtest/summary?from=2024-01-01&to=2024-01-31",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "backtest",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                }
+              ]
+            },
+            "description": "Returns stock backtest summary for date range."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Stock Backtest Trades",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/backtest/trades?from=2024-01-01&to=2024-01-31",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "backtest",
+                "trades"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                }
+              ]
+            },
+            "description": "Returns stock backtest trades. Optional filters: symbol, outcome."
+          },
+          "response": []
+        },
+        {
+          "name": "Clear Stock Backtest Results",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/backtest/clear?from=2024-01-01&to=2024-01-31",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "backtest",
+                "clear"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                }
+              ]
+            },
+            "description": "Deletes stock backtest results for date range."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Backtests - Indexes",
+      "item": [
+        {
+          "name": "Run NIFTY 50 Backtest",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/index-backtest/run/NIFTY_50?from=2024-01-01&to=2024-01-31&clearOld=false",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "index-backtest",
+                "run",
+                "NIFTY_50"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                },
+                {
+                  "key": "clearOld",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Runs strategy on NIFTY_50."
+          },
+          "response": []
+        },
+        {
+          "name": "Run BANK NIFTY Backtest",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/index-backtest/run/BANK_NIFTY?from=2024-01-01&to=2024-01-31&clearOld=false",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "index-backtest",
+                "run",
+                "BANK_NIFTY"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                },
+                {
+                  "key": "clearOld",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Runs strategy on BANK_NIFTY."
+          },
+          "response": []
+        },
+        {
+          "name": "Run FIN NIFTY Backtest",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/index-backtest/run/FIN_NIFTY?from=2024-01-01&to=2024-01-31&clearOld=false",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "index-backtest",
+                "run",
+                "FIN_NIFTY"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                },
+                {
+                  "key": "clearOld",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Runs strategy on FIN_NIFTY."
+          },
+          "response": []
+        },
+        {
+          "name": "Run All Index Backtests",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/index-backtest/run/all?from=2024-01-01&to=2024-01-31&clearOld=false",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "index-backtest",
+                "run",
+                "all"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                },
+                {
+                  "key": "clearOld",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Runs strategy on all supported indexes."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Index Backtest Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/index-backtest/summary/NIFTY_50?from=2024-01-01&to=2024-01-31",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "index-backtest",
+                "summary",
+                "NIFTY_50"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                }
+              ]
+            },
+            "description": "Returns summary for one index. Use all for combined summaries."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Index Backtest Trades",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/index-backtest/trades/NIFTY_50?from=2024-01-01&to=2024-01-31",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "index-backtest",
+                "trades",
+                "NIFTY_50"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                }
+              ]
+            },
+            "description": "Returns trades for one index."
+          },
+          "response": []
+        },
+        {
+          "name": "Clear Index Backtest Results",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/index-backtest/clear/NIFTY_50?from=2024-01-01&to=2024-01-31",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "index-backtest",
+                "clear",
+                "NIFTY_50"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2024-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-31"
+                }
+              ]
+            },
+            "description": "Deletes index backtest results. Use all to clear all indexes."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Backtests - ORB / Weekly",
+      "item": [
+        {
+          "name": "Run ORB Backtest",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/orb/backtest?from=2025-01-01&to=2025-01-31&stopLossPct=1.5",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "orb",
+                "backtest"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2025-01-31"
+                },
+                {
+                  "key": "stopLossPct",
+                  "value": "1.5"
+                }
+              ]
+            },
+            "description": "Starts ORB backtest. Results are sent to Telegram."
+          },
+          "response": []
+        },
+        {
+          "name": "Run Weekly Breakout Backtest",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/weekly/backtest?from=2025-01-01&to=2025-06-30&stopLossPct=2.0",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "weekly",
+                "backtest"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2025-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2025-06-30"
+                },
+                {
+                  "key": "stopLossPct",
+                  "value": "2.0"
+                }
+              ]
+            },
+            "description": "Starts weekly breakout backtest. Results are sent to Telegram."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Trading Analytics",
+      "item": [
+        {
+          "name": "Upload Trading CSV",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/trading/upload",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "trading",
+                "upload"
+              ]
+            },
+            "description": "Uploads trading CSV for analytics.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select CSV file."
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Trading Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/trading/summary",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "trading",
+                "summary"
+              ]
+            },
+            "description": "Returns all daily trading summaries."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Trading Summary by Month",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/trading/summary/by-month?year=2026&month=6",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "trading",
+                "summary",
+                "by-month"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "2026"
+                },
+                {
+                  "key": "month",
+                  "value": "6"
+                }
+              ]
+            },
+            "description": "Returns daily trading summaries for a month."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Trading Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/trading/dashboard?year=2026&month=6",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "trading",
+                "dashboard"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "2026"
+                },
+                {
+                  "key": "month",
+                  "value": "6"
+                }
+              ]
+            },
+            "description": "Returns trading dashboard metrics for a month."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload P&L CSV",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/trading/upload-pnl",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "trading",
+                "upload-pnl"
+              ]
+            },
+            "description": "Uploads P&L CSV.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select CSV file."
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth / Utilities",
+      "item": [
+        {
+          "name": "Upstox Login",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/upstox/login",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "upstox",
+                "login"
+              ]
+            },
+            "description": "Starts Upstox OAuth login flow."
+          },
+          "response": []
+        },
+        {
+          "name": "Upstox Callback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/callback?code=PASTE_CODE_HERE",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "callback"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "PASTE_CODE_HERE"
+                }
+              ]
+            },
+            "description": "OAuth callback endpoint. Normally called by Upstox redirect."
+          },
+          "response": []
+        },
+        {
+          "name": "Send SMS Test",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/send-sms",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "send-sms"
+              ]
+            },
+            "description": "Triggers SMS test endpoint."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Test / Debug Helpers",
+      "item": [
+        {
+          "name": "Refresh Earnings",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/api/earnings/refresh",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "earnings",
+                "refresh"
+              ]
+            },
+            "description": "Refreshes earnings table from NSE."
+          },
+          "response": []
+        },
+        {
+          "name": "Test Global Cues",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/global",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "global"
+              ]
+            },
+            "description": "Sends global market cues to Telegram."
+          },
+          "response": []
+        },
+        {
+          "name": "Test Sentiment",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/sentiment",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "sentiment"
+              ]
+            },
+            "description": "Sends sentiment alert to Telegram."
+          },
+          "response": []
+        },
+        {
+          "name": "Test Daily Jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/daily",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "daily"
+              ]
+            },
+            "description": "Runs daily earnings-related jobs manually."
+          },
+          "response": []
+        },
+        {
+          "name": "Debug Week Ahead",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/debug/week-ahead",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "debug",
+                "week-ahead"
+              ]
+            },
+            "description": "Debugs week-ahead earnings target date."
+          },
+          "response": []
+        },
+        {
+          "name": "Fetch Earnings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/fetch",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "fetch"
+              ]
+            },
+            "description": "Fetches earnings data and logs saved count."
+          },
+          "response": []
+        },
+        {
+          "name": "Week Ahead Alert",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/week-ahead",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "week-ahead"
+              ]
+            },
+            "description": "Triggers week-ahead earnings alert."
+          },
+          "response": []
+        },
+        {
+          "name": "Day Ahead Alert",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/day-ahead",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "day-ahead"
+              ]
+            },
+            "description": "Triggers day-ahead earnings alert."
+          },
+          "response": []
+        },
+        {
+          "name": "Today Earnings Alert",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/today",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "today"
+              ]
+            },
+            "description": "Triggers today earnings alert."
+          },
+          "response": []
+        },
+        {
+          "name": "List Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/events",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "events"
+              ]
+            },
+            "description": "Lists earnings events."
+          },
+          "response": []
+        },
+        {
+          "name": "List Today Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/events/today",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "events",
+                "today"
+              ]
+            },
+            "description": "Lists today earnings events."
+          },
+          "response": []
+        },
+        {
+          "name": "List Upcoming Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/events/upcoming",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "events",
+                "upcoming"
+              ]
+            },
+            "description": "Lists upcoming earnings events."
+          },
+          "response": []
+        },
+        {
+          "name": "Reset Earnings Flags",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/reset-flags",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "reset-flags"
+              ]
+            },
+            "description": "Resets earnings alert flags."
+          },
+          "response": []
+        },
+        {
+          "name": "Run All Test Jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/run-all",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "run-all"
+              ]
+            },
+            "description": "Runs all test jobs."
+          },
+          "response": []
+        },
+        {
+          "name": "Test Telegram",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/telegram",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "telegram"
+              ]
+            },
+            "description": "Sends test Telegram message."
+          },
+          "response": []
+        },
+        {
+          "name": "Test Weekly Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8080/test/weekly-summary",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "test",
+                "weekly-summary"
+              ]
+            },
+            "description": "Triggers weekly earnings summary."
           },
           "response": []
         }
@@ -477,4 +2271,3 @@
     }
   ]
 }
-

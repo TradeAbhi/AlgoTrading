@@ -52,6 +52,10 @@ public class AlertScheduler {
     @Scheduled(cron = "${alert.pdl.refresh.cron}")
     public void refreshPdlJob() {
         log.info("Refreshing previous-day levels at {}", Instant.now());
+        
+        // Clear daily alert tracking at start of new day
+        alertService.clearDailyAlerts();
+        
         pdlService.refreshAll();
 
         // Send a daily summary to Telegram

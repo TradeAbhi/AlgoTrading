@@ -13,6 +13,7 @@ import MoverAnalysis from './components/MoverAnalysis';
 import StockAnalyzer from './components/StockAnalyzer';
 import Nse52WeekHigh from './components/Nse52WeekHigh';
 import Portfolio from './components/Portfolio';
+import BacktestWinnerAnalysis from './components/BacktestWinnerAnalysis';
 
 function App() {
   const [activeScanner, setActiveScanner] = useState('us-weekly');
@@ -149,6 +150,15 @@ function App() {
         >
           💼 Portfolio
         </button>
+        <button
+          onClick={() => setActiveScanner('backtest-winner')}
+          style={{
+            ...styles.navButton,
+            ...(activeScanner === 'backtest-winner' ? styles.activeNavButton : {})
+          }}
+        >
+          🏆 Winner Analysis
+        </button>
       </div>
 
       {/* Scanner Content */}
@@ -166,6 +176,7 @@ function App() {
       {activeScanner === 'mover-analysis' && <MoverAnalysis />}
       {activeScanner === 'stock-analyzer' && <StockAnalyzer />}
       {activeScanner === 'portfolio' && <Portfolio />}
+      {activeScanner === 'backtest-winner' && <BacktestWinnerAnalysis />}
     </div>
   );
 }

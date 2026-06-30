@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -19,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *  - BEARISH BREAKDOWN: last completed 15-min candle CLOSES BELOW previous-day low
  *  - BULLISH BREAKOUT : last completed 15-min candle CLOSES ABOVE previous-day high
  *
- * A cooldown prevents sending duplicate alerts within the configured window.
+ * Alerts fire only ONCE per day per symbol per direction.
  */
 @Slf4j
 @Service
@@ -31,8 +33,8 @@ public class AlertService {
     private final TelegramServices        telegramService;
     private final DeltaAppConfig         appConfig;
 
-    // symbol+direction → last alert time  (for cooldown)
-    private final Map<String, Instant> lastAlertTime = new ConcurrentHashMap<>();
+    // symbol+direction+date → alert already sent today (for daily deduplication)
+    private final Map<String, Boolean> alertSentToday = new ConcurrentHashMap<>();
 
     /**
      * Checks a single symbol and fires Telegram alert if a signal is triggered.
@@ -94,10 +96,12 @@ public class AlertService {
     // -------------------------------------------------------------------------
 
     private void fireAlert(AlertSignal signal) {
-        String cooldownKey = signal.getSymbol() + ":" + signal.getDirection().name();
+        // Create key with date for daily deduplication
+        LocalDate alertDate = signal.getCandleCloseTime().atZone(ZoneOffset.UTC).toLocalDate();
+        String dailyKey = signal.getSymbol() + ":" + signal.getDirection().name() + ":" + alertDate.toString();
 
-        if (isOnCooldown(cooldownKey)) {
-            log.info("Alert suppressed (cooldown active) for key={}", cooldownKey);
+        if (alertSentToday.containsKey(dailyKey)) {
+            log.info("Alert suppressed (already sent today) for key={}", dailyKey);
             return;
         }
 
@@ -108,13 +112,14 @@ public class AlertService {
                 signal.getLevel());
 
         telegramService.sendAlert(signal);
-        lastAlertTime.put(cooldownKey, Instant.now());
+        alertSentToday.put(dailyKey, true);
     }
 
-    private boolean isOnCooldown(String key) {
-        Instant last = lastAlertTime.get(key);
-        if (last == null) return false;
-        long cooldownSeconds = (long) appConfig.getCooldownMinutes() * 60;
-        return Instant.now().isBefore(last.plusSeconds(cooldownSeconds));
+    /**
+     * Clears all daily alert tracking. Should be called at start of each trading day.
+     */
+    public void clearDailyAlerts() {
+        log.info("Clearing daily alert tracking");
+        alertSentToday.clear();
     }
 }

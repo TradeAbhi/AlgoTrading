@@ -397,3 +397,22 @@ export const portfolioApi = {
     return response.data;
   }
 };
+
+// Backtest Winner Analysis API
+const BACKTEST_WINNER_BASE = '/api/backtest-winner-analysis';
+
+export const backtestWinnerApi = {
+  analyze: async (strategyName, from, to) => {
+    const response = await axios.post(`${BACKTEST_WINNER_BASE}/analyze`, null, {
+      params: { strategyName, from, to }
+    });
+    return response.data;
+  },
+
+  analyzeToday: async (strategyName) => {
+    const response = await axios.post(`${BACKTEST_WINNER_BASE}/analyze-today`, null, {
+      params: { strategyName }
+    });
+    return response.data;
+  }
+};

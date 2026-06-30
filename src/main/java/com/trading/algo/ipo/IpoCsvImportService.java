@@ -55,6 +55,7 @@ public class IpoCsvImportService {
         BufferedReader reader = new BufferedReader(
                 new InputStreamReader(inputStream, StandardCharsets.UTF_8));
 
+        List<Ipo> importedIpos  = new ArrayList<>();
         List<String> imported  = new ArrayList<>();
         List<String> skipped   = new ArrayList<>();
         List<String> errors    = new ArrayList<>();
@@ -141,6 +142,7 @@ public class IpoCsvImportService {
                 }
 
                 ipoRepository.save(ipo);
+                importedIpos.add(ipo);
                 imported.add(companyName + " (" + symbol + ")");
                 log.info("Upserted IPO: {} | {} | listing: {}", companyName, symbol, listingDate);
 
@@ -154,7 +156,7 @@ public class IpoCsvImportService {
         log.info("CSV import complete — imported={} errors={}",
                 imported.size(), errors.size());
 
-        return new ImportResult(imported, skipped, errors);
+        return new ImportResult(importedIpos, imported, skipped, errors);
     }
 
     // =========================================================================
@@ -237,6 +239,7 @@ public class IpoCsvImportService {
     // =========================================================================
 
     public record ImportResult(
+            List<Ipo> importedIpos,
             List<String> imported,
             List<String> skipped,
             List<String> errors

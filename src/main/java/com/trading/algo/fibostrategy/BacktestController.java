@@ -11,9 +11,13 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Backtest REST controller.
@@ -44,6 +48,9 @@ public class BacktestController {
 
     private final BacktestRunnerService   runner;
     private final BacktestTradeRepository tradeRepo;
+    
+    // Global cancellation flag that can be set by the cancel endpoint
+    private static volatile AtomicBoolean globalCancellationFlag = new AtomicBoolean(false);
 
     // =========================================================================
     // RUN
@@ -81,8 +88,31 @@ public class BacktestController {
             log.warn("Date range > 3 months — consider running in smaller chunks");
         }
 
-        BacktestSummaryDTO summary = runner.run(from, to, clearOld);
+        // Reset cancellation flag at the start of a new backtest
+        globalCancellationFlag.set(false);
+        
+        BacktestSummaryDTO summary = runner.run(from, to, clearOld, globalCancellationFlag);
+        
+        if (globalCancellationFlag.get()) {
+            log.info("Backtest was cancelled");
+            return ResponseEntity.status(499).body(summary);
+        }
+        
         return ResponseEntity.ok(summary);
+    }
+
+    /**
+     * POST /api/backtest/cancel
+     * 
+     * Cancels the currently running backtest.
+     * 
+     * curl -X POST "http://localhost:8080/api/backtest/cancel"
+     */
+    @PostMapping("/cancel")
+    public ResponseEntity<Map<String, String>> cancelBacktest() {
+        log.info("POST /api/backtest/cancel — cancellation requested");
+        globalCancellationFlag.set(true);
+        return ResponseEntity.ok(Map.of("status", "cancellation_requested"));
     }
 
     // =========================================================================

@@ -112,6 +112,16 @@ telegram:
       token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
     chat:
       id: 780646088
+  earnings:
+    bot:
+      token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
+    chat:
+      id: 780646088
+  mover:
+    bot:
+      token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
+    chat:
+      id: 780646088
   delta:
     bot:
       token: 8883503257:AAE3ln_MmU7ETbpqsCROoFhcJqXm5cR50tA
@@ -125,6 +135,15 @@ telegram.investment-picks.bot.token: 8712660586:AAHBTK7jCc-VqPdCAPo-rl5B0OZuvqdu
 telegram.investment-picks.chat.id: 780646088
 telegram.intraday.bot.token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
 telegram.intraday.chat.id: 780646088
+telegram.earnings.bot.token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
+telegram.earnings.chat.id: 780646088
+telegram.mover.bot.token: 8864655349:AAGCjB4FO2GBrcibPMZPh6o3dq89pi1x4_o
+telegram.mover.chat.id: 780646088
+telegram.index.bot.token: 8662878816:AAEBlRCWGLm97dmRmUo7uHjxhjrQGNrCalM
+telegram.index.chat.id: 780646088
+telegram.holdings.bot.token: ${TELEGRAM_HOLDINGS_BOT_TOKEN:}
+telegram.holdings.chat.id: ${TELEGRAM_HOLDINGS_CHAT_ID:}
+
 
 upstox:
   enabled: true
@@ -142,11 +161,14 @@ zerodha:
   #   secret: your_api_secret
 
 dhan:
-  enabled: false
-  # TODO: Add Dhan API credentials when implementing
+  enabled: ${DHAN_ENABLED:false}
+  access:
+    token: ${DHAN_ACCESS_TOKEN:}
   api:
-    key: a42001e2-eb06-44bd-9e9d-7c250ce95298
-  #   secret: your_api_secret
+    key: ${DHAN_API_KEY:}
+    secret: ${DHAN_API_SECRET:}
+  redirect:
+    uri: http://localhost:8080/api/dhan/callback
 
 twelvedata:
   api-key: 3f784585013c404186706bf9ba27ef7a
@@ -160,7 +182,7 @@ delta:
     base-url: https://api.india.delta.exchange
     testnet: false
     testnet-url: https://testnet-api.delta.exchange
-  symbols: BTCUSD,ETHUSD,SOLUSD,PAXGUSD,XRPUSD
+  symbols: BTCUSD,ETHUSD,SOLUSD,PAXGUSD
 
 alert:
   scheduler:

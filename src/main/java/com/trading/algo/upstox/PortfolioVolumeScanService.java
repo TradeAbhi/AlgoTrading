@@ -54,6 +54,7 @@ public class PortfolioVolumeScanService {
 
     private final UnifiedPortfolioService unifiedPortfolioService;
     private final UpstoxHistoricalCandleService upstoxHistoricalCandleService;
+    private final UpstoxTokenService upstoxTokenService;
     private final TelegramService telegramService;
     private final DiscordService discordService;
 
@@ -63,10 +64,16 @@ public class PortfolioVolumeScanService {
     public void scanPortfolioForVolumeSpike() {
         log.info("Starting portfolio volume and price movement scan across all brokers");
 
+        // Check if Upstox is authenticated before proceeding
+        if (!upstoxTokenService.isAuthenticated()) {
+            log.warn("Portfolio volume scan skipped - Upstox not authenticated");
+            return;
+        }
+
         List<PortfolioHolding> holdings = unifiedPortfolioService.fetchAllHoldings();
         if (holdings.isEmpty()) {
             log.warn("No portfolio holdings found from any broker");
-            telegramService.sendMessage("📊 Portfolio Scan\n\nNo holdings found in portfolio.");
+            telegramService.sendMessageToHoldings("📊 Portfolio Scan\n\nNo holdings found in enabled broker portfolios.");
             return;
         }
 
@@ -122,7 +129,7 @@ public class PortfolioVolumeScanService {
 
         if (volumeAlerts.isEmpty() && priceAlerts.isEmpty()) {
             log.info("No alerts generated for {} holdings", holdings.size());
-            telegramService.sendMessage(String.format(
+            telegramService.sendMessageToHoldings(String.format(
                 "📊 Portfolio Scan\n\nScanned %d holdings across %s. No volume spike or price movement detected.",
                 holdings.size(),
                 String.join(", ", unifiedPortfolioService.getEnabledBrokers())
@@ -195,7 +202,7 @@ public class PortfolioVolumeScanService {
                 .avgVolumeTimeframe((long) avgVolume)
                 .volumeRatioTimeframe(volumeRatio)
                 .lookbackPeriod(actualLookback)
-                .broker("UPSTOX") // TODO: Update when broker info is added to PortfolioHolding
+                .broker(holding.getBroker())
                 .build();
     }
 
@@ -332,7 +339,7 @@ public class PortfolioVolumeScanService {
                 .timeframe(timeframe)
                 .quantity(holding.getQuantity())
                 .pnl(holding.getPnl())
-                .broker("UPSTOX") // TODO: Update when broker info is added to PortfolioHolding
+                .broker(holding.getBroker())
                 .build();
     }
 
@@ -385,7 +392,7 @@ public class PortfolioVolumeScanService {
 
         message.append(String.format("Total volume alerts: %d", alerts.size()));
 
-        telegramService.sendMessage(message.toString());
+        telegramService.sendMessageToHoldings(message.toString());
         discordService.sendMessage(message.toString());
 
         log.info("Sent {} volume spike alerts", alerts.size());
@@ -427,7 +434,7 @@ public class PortfolioVolumeScanService {
 
         message.append(String.format("Total price movement alerts: %d", alerts.size()));
 
-        telegramService.sendMessage(message.toString());
+        telegramService.sendMessageToHoldings(message.toString());
         discordService.sendMessage(message.toString());
 
         log.info("Sent {} price movement alerts", alerts.size());

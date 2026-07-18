@@ -21,8 +21,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 /**
@@ -52,7 +52,8 @@ public class BacktestRunnerService {
     // Main run
     // =========================================================================
 
-    public BacktestSummaryDTO run(LocalDate fromDate, LocalDate toDate, boolean clearOld) {
+    public BacktestSummaryDTO run(LocalDate fromDate, LocalDate toDate, boolean clearOld, 
+                                   AtomicBoolean cancelled) {
         log.info("Backtest START — from={} to={} clearOld={}", fromDate, toDate, clearOld);
 
         if (clearOld) {
@@ -81,11 +82,18 @@ public class BacktestRunnerService {
 
         AtomicInteger totalSignals   = new AtomicInteger(0);
         AtomicInteger totalProcessed = new AtomicInteger(0);
+        FilterAvailabilityTracker filterAvailability = new FilterAvailabilityTracker();
 
         ExecutorService pool = Executors.newFixedThreadPool(config.getThreadPoolSize());
 
         try {
             for (int d = 0; d < tradingDays.size(); d++) {
+                // Check for cancellation before processing each day
+                if (cancelled.get()) {
+                    log.info("Backtest cancelled - stopping before day {}", d + 1);
+                    break;
+                }
+
                 LocalDate date = tradingDays.get(d);
                 log.info("Processing date: {} ({}/{})", date, d + 1, tradingDays.size());
 
@@ -102,7 +110,23 @@ public class BacktestRunnerService {
 
                 // Problem 3 — fetch A/D ratio once per day (shared across all symbol threads)
                 double adRatio = fetchAdRatio();
+                filterAvailability.record("advanceDeclineRatio", adRatio < 0 || adRatio == 0);
                 log.info("Date {} — A/D ratio={}", date, adRatio);
+
+                // Market trend filter data - fetch once per day
+                double niftyVwap = marketSentimentService.fetchNiftyVWAP();
+                double niftyPrice = marketSentimentService.fetchNiftyPrice();
+                double vix = 0.0;
+                try {
+                    vix = marketSentimentService.fetchVIX();
+                } catch (Exception e) {
+                    log.warn("Failed to fetch VIX for date {}: {}", date, e.getMessage());
+                }
+                filterAvailability.record("niftyVwap", niftyVwap == 0);
+                filterAvailability.record("niftyPrice", niftyPrice == 0);
+                filterAvailability.record("indiaVix", vix == 0);
+                log.info("Date {} — Nifty VWAP={} Nifty Price={} VIX={}", date, niftyVwap, niftyPrice, vix);
+                final double dailyVix = vix;
 
                 // Improvement 10 — track daily losses; reduce risk size after maxDailyLosses
                 java.util.concurrent.atomic.AtomicInteger dayLossCount = new java.util.concurrent.atomic.AtomicInteger(0);
@@ -113,10 +137,17 @@ public class BacktestRunnerService {
                         .map(entry -> CompletableFuture.runAsync(() ->
                                 processSymbol(entry.getKey(), entry.getValue(), date,
                                         alreadyProcessed, dayTrades,
-                                        totalSignals, totalProcessed, adRatio, dayLossCount), pool))
+                                        totalSignals, totalProcessed, adRatio, dayLossCount,
+                                        niftyVwap, niftyPrice, dailyVix, cancelled, filterAvailability), pool))
                         .collect(Collectors.toList());
 
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+                // Check for cancellation after processing each day
+                if (cancelled.get()) {
+                    log.info("Backtest cancelled during processing");
+                    break;
+                }
 
                 // OPTIMIZATION (Batch DB): single saveAll() per day instead of one save() per trade
                 // OLD: tradeRepo.save(trade) called individually inside each thread
@@ -139,7 +170,9 @@ public class BacktestRunnerService {
         }
 
         log.info("Backtest COMPLETE — processed={} signals={}", totalProcessed.get(), totalSignals.get());
-        return buildSummary(fromDate, toDate, fnoSymbols.size());
+        BacktestSummaryDTO summary = buildSummary(fromDate, toDate, fnoSymbols.size());
+        summary.setUnavailableFilters(filterAvailability.unavailableThroughoutScan());
+        return summary;
     }
 
     // =========================================================================
@@ -151,8 +184,16 @@ public class BacktestRunnerService {
                                 CopyOnWriteArrayList<BacktestTrade> dayTrades,
                                 AtomicInteger totalSignals, AtomicInteger totalProcessed,
                                 double adRatio,
-                                java.util.concurrent.atomic.AtomicInteger dayLossCount) {
+                                java.util.concurrent.atomic.AtomicInteger dayLossCount,
+                                double niftyVwap, double niftyPrice, double vix,
+                                AtomicBoolean cancelled,
+                                FilterAvailabilityTracker filterAvailability) {
         try {
+            // Check for cancellation before processing each symbol
+            if (cancelled.get()) {
+                return;
+            }
+
             if (alreadyProcessed.contains(symbol)) return;
 
             // Improvement 10 — daily loss cap: stop taking new trades once maxDailyLosses hit
@@ -174,10 +215,25 @@ public class BacktestRunnerService {
                     ? config.getFixedRiskRupees() * config.getLossSizeReductionFactor()
                     : config.getFixedRiskRupees();
 
-            double dailyAtr  = computeAtr(instrumentKey, date);
+            // ATR filter commented out for performance - using 0.0 to skip filter
+            // double dailyAtr  = computeAtr(instrumentKey, date);
+            double dailyAtr = 0.0;
+            double atr5m = compute5mAtr(instrumentKey, date);
             long avgC1Volume = computeAvgC1Volume(instrumentKey, date);
 
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees);
+            Map<String, Double> prevDayOhlc = fetchPrevDayOhlc(instrumentKey, date);
+            Double prevDayHigh = prevDayOhlc != null ? prevDayOhlc.get("high") : null;
+            Double prevDayLow = prevDayOhlc != null ? prevDayOhlc.get("low") : null;
+            Double prevDayClose = prevDayOhlc != null ? prevDayOhlc.get("close") : null;
+
+            filterAvailability.record("dailyAtr", dailyAtr == 0);
+            filterAvailability.record("atr5m", atr5m == 0);
+            filterAvailability.record("averageC1Volume", avgC1Volume == 0);
+            filterAvailability.record("previousDayOhlc",
+                    prevDayHigh == null || prevDayLow == null || prevDayClose == null
+                            || prevDayHigh == 0 || prevDayLow == 0 || prevDayClose == 0);
+
+            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees, prevDayHigh, prevDayLow, prevDayClose, niftyVwap, niftyPrice, vix, atr5m);
 
             if (trade.isPresent()) {
                 BacktestTrade t = trade.get();
@@ -216,6 +272,24 @@ public class BacktestRunnerService {
             return last20.stream().mapToDouble(Candle::range).average().orElse(0.0);
         } catch (Exception e) {
             log.debug("ATR computation failed for {}: {}", instrumentKey, e.getMessage());
+            return 0.0;
+        }
+    }
+
+    /**
+     * 5-minute ATR calculation for exhausted moves filter.
+     * Fetches 5-minute candles for the current day and calculates ATR.
+     * Returns 0.0 if data unavailable — strategy skips the filter when 0.
+     */
+    private double compute5mAtr(String instrumentKey, LocalDate date) {
+        try {
+            List<Candle> candles5m = candleService.fetch5mDayCandles(instrumentKey, date);
+            if (candles5m.size() < 5) return 0.0;
+            // Calculate ATR using last 5 candles (25 minutes of data)
+            List<Candle> last5 = candles5m.subList(Math.max(0, candles5m.size() - 5), candles5m.size());
+            return last5.stream().mapToDouble(Candle::range).average().orElse(0.0);
+        } catch (Exception e) {
+            log.debug("5m ATR computation failed for {}: {}", instrumentKey, e.getMessage());
             return 0.0;
         }
     }
@@ -269,6 +343,33 @@ public class BacktestRunnerService {
         } catch (Exception e) {
             log.debug("A/D ratio fetch failed: {}", e.getMessage());
             return -1.0;
+        }
+    }
+
+    /**
+     * Fetch previous day's OHLC data for the given instrument key and date.
+     * Returns a map with "high", "low", "close" keys, or null if unavailable.
+     */
+    private Map<String, Double> fetchPrevDayOhlc(String instrumentKey, LocalDate date) {
+        try {
+            LocalDate prevDate = date.minusDays(1);
+            // Skip weekends
+            while (prevDate.getDayOfWeek() == DayOfWeek.SATURDAY || prevDate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                prevDate = prevDate.minusDays(1);
+            }
+            List<Candle> dailyCandles = candleService.fetchDailyCandles(instrumentKey, prevDate, prevDate);
+            if (dailyCandles.isEmpty()) {
+                return null;
+            }
+            Candle prevDayCandle = dailyCandles.get(0);
+            return Map.of(
+                    "high", prevDayCandle.getHigh(),
+                    "low", prevDayCandle.getLow(),
+                    "close", prevDayCandle.getClose()
+            );
+        } catch (Exception e) {
+            log.debug("Previous day OHLC fetch failed for {}: {}", instrumentKey, e.getMessage());
+            return null;
         }
     }
 
@@ -364,6 +465,42 @@ public class BacktestRunnerService {
                 .topSymbols(top10)
                 .worstSymbols(worst10)
                 .build();
+    }
+
+    // =========================================================================
+    // Filter availability diagnostics
+    // =========================================================================
+
+    /** Thread-safe counters for filter inputs observed during one backtest run. */
+    private static class FilterAvailabilityTracker {
+        private final Map<String, FilterAvailability> filters = new ConcurrentHashMap<>();
+
+        void record(String filter, boolean unavailable) {
+            FilterAvailability availability = filters.computeIfAbsent(filter, ignored -> new FilterAvailability());
+            availability.samples.incrementAndGet();
+            if (unavailable) {
+                availability.unavailableSamples.incrementAndGet();
+            }
+        }
+
+        List<BacktestSummaryDTO.FilterDiagnostic> unavailableThroughoutScan() {
+            return filters.entrySet().stream()
+                    .filter(entry -> entry.getValue().samples.get() > 0
+                            && entry.getValue().samples.get() == entry.getValue().unavailableSamples.get())
+                    .map(entry -> BacktestSummaryDTO.FilterDiagnostic.builder()
+                            .filter(entry.getKey())
+                            .samples(entry.getValue().samples.get())
+                            .unavailableSamples(entry.getValue().unavailableSamples.get())
+                            .reason("Input was null, zero, or unavailable for every usable scan sample")
+                            .build())
+                    .sorted((left, right) -> left.getFilter().compareTo(right.getFilter()))
+                    .collect(Collectors.toList());
+        }
+    }
+
+    private static class FilterAvailability {
+        private final AtomicInteger samples = new AtomicInteger();
+        private final AtomicInteger unavailableSamples = new AtomicInteger();
     }
 
     // =========================================================================

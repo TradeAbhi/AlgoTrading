@@ -1,11 +1,11 @@
 package com.trading.algo.delta.model;
 
+import lombok.Builder;
+import lombok.Data;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
-
-import lombok.Builder;
-import lombok.Data;
 
 /**
  * Aggregated backtest results returned to the caller.

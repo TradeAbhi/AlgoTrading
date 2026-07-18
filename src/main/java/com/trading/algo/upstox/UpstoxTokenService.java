@@ -44,6 +44,7 @@ public class UpstoxTokenService {
     // In-memory token storage
     private volatile String accessToken  = "";
     private volatile String lastAuthCode = "";
+    private volatile boolean authenticated = false;
 
     private static final String TOKEN_URL    = "https://api.upstox.com/v2/login/authorization/token";
     private static final String AUTH_URL     = "https://api.upstox.com/v2/login/authorization/dialog";
@@ -71,6 +72,7 @@ public class UpstoxTokenService {
             this.lastAuthCode = code;
             String token = exchangeCodeForToken(code);
             this.accessToken = token;
+            this.authenticated = true;
             System.out.println("[Upstox] Token obtained successfully via OAuth callback.");
             telegramService.sendMessage("Upstox token refreshed successfully at " + java.time.LocalTime.now());
             return "Token obtained successfully!";
@@ -78,6 +80,10 @@ public class UpstoxTokenService {
             System.err.println("[Upstox] Token exchange failed: " + e.getMessage());
             return "Token exchange failed: " + e.getMessage();
         }
+    }
+
+    public boolean isAuthenticated() {
+        return authenticated;
     }
 
     /**

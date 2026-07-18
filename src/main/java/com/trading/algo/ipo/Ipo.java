@@ -56,10 +56,20 @@ public class Ipo {
     private LocalDateTime listingMonitoredAt;
 
     // ── Alert flags ──────────────────────────────────────────────────────────
-    private boolean alert10DaySent;
-    private boolean alertOpenSent;
-    private boolean alertListingSent;
+    private Boolean alert10DaySent = false;
+    private Boolean alertOpenSent = false;
+    private Boolean alertListingSent = false;
 
     @Column(name = "alert_listing_perf_sent")
-    private boolean alertListingPerfSent;  // EOD performance alert on listing day
+    private Boolean alertListingPerfSent = false;  // EOD performance alert on listing day
+
+    // ── Grey Market Premium (GMP) ────────────────────────────────────────────
+    @Column(name = "gmp")
+    private Double gmp;  // Grey Market Premium in percentage
+
+    @Column(name = "gmp_updated_at")
+    private LocalDateTime gmpUpdatedAt;  // When GMP was last fetched
+
+    @Column(name = "alert_gmp_sent")
+    private Boolean alertGmpSent = false;  // Whether GMP alert has been sent
 }

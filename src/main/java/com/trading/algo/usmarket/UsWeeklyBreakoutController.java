@@ -5,11 +5,7 @@ import com.trading.algo.dtos.UsWeeklyBreakoutStateStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
@@ -95,6 +91,31 @@ public class UsWeeklyBreakoutController {
         return ResponseEntity.ok(Map.of(
                 "status", "Tickers uploaded and seeded successfully",
                 "tickersLoaded", stateStore.size()
+        ));
+    }
+
+    /**
+     * Combined endpoint: upload tickers and then run full week scan.
+     * This replaces the need to call /upload-tickers followed by /scan-week.
+     *
+     * @param tickers A list of ticker symbols, one per line.
+     * @return A response indicating the status of upload, seed, and scan operations.
+     */
+    @PostMapping("/upload-and-scan")
+    public ResponseEntity<Map<String, Object>> uploadAndScan(@RequestBody List<String> tickers) {
+        log.info("[US-WEEKLY] Combined upload and scan triggered via /us-weekly/upload-and-scan. Received {} tickers.", tickers.size());
+        
+        // Step 1: Upload and seed tickers
+        scannerService.uploadAndSeed(tickers);
+        
+        // Step 2: Run full week scan
+        int[] scanResult = scannerService.scanWeek();
+        
+        return ResponseEntity.ok(Map.of(
+                "status", "Tickers uploaded, seeded, and week scan completed",
+                "tickersLoaded", stateStore.size(),
+                "buyFired", scanResult[0],
+                "sellFired", scanResult[1]
         ));
     }
 

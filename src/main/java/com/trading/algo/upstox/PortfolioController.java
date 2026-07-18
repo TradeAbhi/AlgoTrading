@@ -24,6 +24,7 @@ public class PortfolioController {
 
     private final UnifiedPortfolioService unifiedPortfolioService;
     private final PortfolioVolumeScanService portfolioVolumeScanService;
+    private final com.trading.algo.broker.CapAllocationAlertService capAllocationAlertService;
 
     /**
      * GET /api/portfolio/holdings
@@ -68,6 +69,25 @@ public class PortfolioController {
             return ResponseEntity.ok(Map.of("status", "Portfolio volume scan complete"));
         } catch (Exception e) {
             log.error("Volume scan failed: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/portfolio/cap-allocation-check
+     * Manually triggers the small/mid-cap allocation check for all enabled brokers.
+     *
+     * curl -X POST http://localhost:8080/api/portfolio/cap-allocation-check
+     */
+    @PostMapping("/cap-allocation-check")
+    public ResponseEntity<Map<String, String>> triggerCapAllocationCheck() {
+        log.info("POST /api/portfolio/cap-allocation-check");
+        try {
+            capAllocationAlertService.checkAndAlert();
+            return ResponseEntity.ok(Map.of("status", "Cap allocation check complete"));
+        } catch (Exception e) {
+            log.error("Cap allocation check failed: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", e.getMessage()));
         }

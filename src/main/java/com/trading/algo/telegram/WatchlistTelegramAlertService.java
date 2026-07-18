@@ -60,6 +60,13 @@ public class WatchlistTelegramAlertService {
     public void sendWatchlistDigest() {
         try {
             WatchlistResponse watchlist = watchlistService.getLiveWatchlist();
+            
+            // Skip sending if watchlist is empty due to no authentication
+            if (watchlist.getTotalSymbolsScanned() == 0 && "CLOSED".equals(watchlist.getMarketStatus())) {
+                log.debug("Watchlist digest skipped - no data available (likely not authenticated)");
+                return;
+            }
+            
             String message = buildMessage(watchlist);
             sendTelegramMessage(message);
             log.info("Watchlist digest sent to Telegram successfully");
@@ -154,7 +161,7 @@ public class WatchlistTelegramAlertService {
         sb.append("\n");
     }
 
-    /** 📌 High OI — symbol + OI change % + price % change */
+    /** 📌 High OI — symbol + OI value (in lakhs) + price % change */
     private void appendHighOi(StringBuilder sb, List<WatchlistItem> items,
                               Map<WatchlistCategory, Set<String>> previous) {
         sb.append("\uD83D\uDCCC *High OI*\n");
@@ -163,8 +170,10 @@ public class WatchlistTelegramAlertService {
             String chg = i.getChangePercent() >= 0
                     ? String.format("\u25B2 %.2f%%", i.getChangePercent())
                     : String.format("\u25BC %.2f%%", Math.abs(i.getChangePercent()));
-            sb.append(String.format("`%-12s` OI: %.1f%% | %s%s\n",
-                    i.getSymbol(), i.getOiChangePercent(), chg,
+            // Convert OI to lakhs for readability (1 lakh = 100,000)
+            double oiInLakhs = i.getOpenInterest() / 100_000.0;
+            sb.append(String.format("`%-12s` OI: %.1fL | %s%s\n",
+                    i.getSymbol(), oiInLakhs, chg,
                     newMarker(WatchlistCategory.HIGH_OI, i, previous)));
         });
         sb.append("\n");

@@ -1,5 +1,6 @@
 package com.trading.algo.ipo;
 
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,7 @@ public class IpoCsvImportService {
     );
 
     private final IpoRepository ipoRepository;
+    private final EntityManager entityManager;
 
     // =========================================================================
     // Main import method
@@ -118,7 +120,16 @@ public class IpoCsvImportService {
 
                 // ── Upsert by company name ───────────────────────────────────
                 Ipo ipo = ipoRepository.findByName(companyName)
-                        .orElseGet(Ipo::new);
+                        .orElseGet(() -> {
+                            Ipo newIpo = new Ipo();
+                            // Initialize alert fields for new IPOs to satisfy NOT NULL constraint
+                            newIpo.setAlert10DaySent(false);
+                            newIpo.setAlertOpenSent(false);
+                            newIpo.setAlertListingSent(false);
+                            newIpo.setAlertListingPerfSent(false);
+                            newIpo.setAlertGmpSent(false);
+                            return newIpo;
+                        });
 
                 ipo.setName(companyName);
                 ipo.setSymbol(symbol.isBlank() || symbol.equals("-") ? null : symbol.toUpperCase());
@@ -142,11 +153,13 @@ public class IpoCsvImportService {
                 }
 
                 ipoRepository.save(ipo);
+                entityManager.clear(); // Clear session to prevent cascade failures
                 importedIpos.add(ipo);
                 imported.add(companyName + " (" + symbol + ")");
                 log.info("Upserted IPO: {} | {} | listing: {}", companyName, symbol, listingDate);
 
             } catch (Exception e) {
+                entityManager.clear(); // Clear session on error to prevent cascade failures
                 errors.add("Line " + lineNum + ": " + e.getMessage());
                 log.warn("Error parsing line {} ({}): {}", lineNum, e.getMessage(),
                         line.length() > 80 ? line.substring(0, 80) + "..." : line);

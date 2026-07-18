@@ -23,6 +23,8 @@ public interface MoverCharacteristicsRepository
     boolean existsBySymbolAndTradeDateAndCategory(
             String symbol, LocalDate date, String category);
 
+    boolean existsByTradeDate(LocalDate date);
+
     // ── Pattern aggregation queries ───────────────────────────────────────────
 
     @Query("SELECT AVG(m.volumeRatio) FROM MoverCharacteristics m " +

@@ -1,6 +1,7 @@
 package com.trading.algo.upstox;
 
 
+import com.trading.algo.momentum.WatchlistService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,6 +28,7 @@ import org.springframework.web.servlet.view.RedirectView;
 public class UpstoxAuthController {
 
     private final UpstoxTokenService upstoxTokenService;
+    private final WatchlistService   watchlistService;
 
     /**
      * Step 1: Visit this URL in browser to start OAuth flow.
@@ -46,6 +48,8 @@ public class UpstoxAuthController {
     @GetMapping("/callback")
     public String callback(@RequestParam String code) {
         System.out.println("[Upstox] Received auth code: " + code);
-        return upstoxTokenService.setCodeAndFetchToken(code);
+        String result = upstoxTokenService.setCodeAndFetchToken(code);
+        watchlistService.trySnapshotAfterAuth();
+        return result;
     }
 }

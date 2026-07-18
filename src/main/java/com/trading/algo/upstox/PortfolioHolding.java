@@ -21,4 +21,5 @@ public class PortfolioHolding {
     private double averagePrice;
     private String companyName;
     private String isin;
+    private String broker;
 }

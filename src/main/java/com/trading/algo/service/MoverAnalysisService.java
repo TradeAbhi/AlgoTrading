@@ -1,11 +1,15 @@
 package com.trading.algo.service;
 
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.dtos.WatchlistItem;
+import com.trading.algo.dtos.WatchlistResponse;
 import com.trading.algo.entity.MoverCharacteristics;
+import com.trading.algo.entity.WatchlistSnapshot;
 import com.trading.algo.momentum.WatchlistService;
 import com.trading.algo.repo.MoverCharacteristicsRepository;
+import com.trading.algo.repo.WatchlistSnapshotRepository;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
@@ -49,6 +53,8 @@ public class MoverAnalysisService {
     private final UpstoxInstrumentMasterService instrumentMaster;
     private final MoverCharacteristicsRepository repo;
     private final TelegramService               telegramService;
+    private final WatchlistSnapshotRepository   snapshotRepo;
+    private final ObjectMapper                  objectMapper;
 
     // =========================================================================
     // Main entry — called at 3:35 PM or manually
@@ -63,12 +69,69 @@ public class MoverAnalysisService {
         analyseToday();
     }
 
+    // =========================================================================
+    // Backfill: analyze missing trading days
+    // =========================================================================
+
+    /**
+     * Backfill mover analysis for missing trading days within a date range.
+     * Only analyzes weekdays (MON-FRI) that don't already have data.
+     *
+     * @param fromDate start date (inclusive)
+     * @param toDate end date (inclusive)
+     * @return summary of backfill results
+     */
+    @Transactional
+    public String backfill(LocalDate fromDate, LocalDate toDate, boolean force) {
+        log.info("Backfill START — from {} to {} force={}", fromDate, toDate, force);
+
+        int totalDays = 0, processedDays = 0, skippedDays = 0, failedDays = 0;
+
+        for (LocalDate date = fromDate; !date.isAfter(toDate); date = date.plusDays(1)) {
+            if (date.getDayOfWeek() == java.time.DayOfWeek.SATURDAY ||
+                date.getDayOfWeek() == java.time.DayOfWeek.SUNDAY) {
+                continue;
+            }
+
+            totalDays++;
+
+            if (repo.existsByTradeDate(date)) {
+                log.debug("Skipping {} - already has analysis data", date);
+                skippedDays++;
+                continue;
+            }
+
+            if (!force && !snapshotRepo.existsByTradeDate(date)) {
+                log.warn("Skipping {} - no watchlist snapshot available (use force=true to override)", date);
+                skippedDays++;
+                continue;
+            }
+
+            try {
+                analyse(date);
+                processedDays++;
+                log.info("Backfill completed for {}", date);
+                Thread.sleep(500);
+            } catch (Exception e) {
+                log.error("Backfill failed for {}: {}", date, e.getMessage());
+                failedDays++;
+            }
+        }
+
+        String summary = String.format(
+            "Backfill COMPLETE — Total: %d, Processed: %d, Skipped: %d, Failed: %d",
+            totalDays, processedDays, skippedDays, failedDays
+        );
+        log.info(summary);
+        return summary;
+    }
+
     @Transactional
     public void analyse(LocalDate date) {
         log.info("MoverAnalysis START — date={}", date);
 
-        // Get today's watchlist (last built snapshot)
-        var watchlist = watchlistService.getLiveWatchlist();
+        // Try to get watchlist from snapshot first (for backfill), otherwise use live watchlist
+        WatchlistResponse watchlist = getWatchlistForDate(date);
 
         List<MoverCharacteristics> saved = new ArrayList<>();
 
@@ -81,6 +144,32 @@ public class MoverAnalysisService {
 
         // Send Telegram report
         sendTelegramReport(date);
+    }
+
+    /**
+     * Get watchlist for a specific date.
+     * If snapshot exists for that date, use it (for backfill).
+     * Otherwise, use live watchlist (for current day).
+     */
+    private WatchlistResponse getWatchlistForDate(LocalDate date) {
+        if (date.equals(LocalDate.now())) {
+            // Use live watchlist for today
+            return watchlistService.getLiveWatchlist();
+        }
+
+        // Try to get snapshot for historical date
+        Optional<WatchlistSnapshot> snapshotOpt = snapshotRepo.findByTradeDate(date);
+        if (snapshotOpt.isPresent()) {
+            try {
+                String jsonData = snapshotOpt.get().getWatchlistData();
+                return objectMapper.readValue(jsonData, WatchlistResponse.class);
+            } catch (Exception e) {
+                log.error("Failed to parse watchlist snapshot for {}: {}", date, e.getMessage());
+            }
+        }
+
+        log.warn("No snapshot found for {}, using live watchlist as fallback", date);
+        return watchlistService.getLiveWatchlist();
     }
 
     // =========================================================================
@@ -208,7 +297,10 @@ public class MoverAnalysisService {
                     "Symbol", "Chg%", "Vol×", "C1Wk", "RSI", "ATR×", "Gap%"));
             sb.append("─────────────────────────────────────────\n");
 
-            for (MoverCharacteristics m : movers) {
+            // Limit to top 5 stocks per category to avoid Telegram message length limit
+            int maxStocks = Math.min(5, movers.size());
+            for (int i = 0; i < maxStocks; i++) {
+                MoverCharacteristics m = movers.get(i);
                 sb.append(String.format("`%-11s` %+5.1f%% %5.0fx %4.2f %4.0f %4.1fx %+4.1f%%\n",
                         m.getSymbol(),
                         m.getChangePercent(),
@@ -219,29 +311,13 @@ public class MoverAnalysisService {
                         m.getGapPercent()));
             }
 
-            // Pattern averages from last N days
-            LocalDate since = date.minusDays(PATTERN_DAYS);
-            long  count     = repo.countByCategorySince(category, since);
-            if (count >= 5) {
-                Double avgVol  = repo.avgVolumeRatio(category, since);
-                Double avgRsi  = repo.avgPrevRsi(category, since);
-                Double avgAtr  = repo.avgAtrRatio(category, since);
-                Double avgWick = repo.avgC1WickRatio(category, since);
-                Double avgGap  = repo.avgGapPercent(category, since);
-
-                sb.append(String.format(
-                        "📊 _%d-day avg: Vol×%.0f | RSI%.0f | ATR×%.1f | Wick%.2f | Gap%+.1f%%_\n",
-                        PATTERN_DAYS,
-                        avgVol  != null ? avgVol  : 0,
-                        avgRsi  != null ? avgRsi  : 0,
-                        avgAtr  != null ? avgAtr  : 0,
-                        avgWick != null ? avgWick : 0,
-                        avgGap  != null ? avgGap  : 0));
+            if (movers.size() > 5) {
+                sb.append(String.format("... and %d more stocks\n", movers.size() - 5));
             }
             sb.append("\n");
         }
 
-        telegramService.sendMessage(sb.toString());
+        telegramService.sendMessageToMover(sb.toString());
         log.info("Mover analysis Telegram report sent for {}", date);
     }
 

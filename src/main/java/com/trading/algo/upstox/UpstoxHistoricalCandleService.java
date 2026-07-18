@@ -43,6 +43,12 @@ public class UpstoxHistoricalCandleService {
     private static final String INTRADAY_URL  =
             "https://api.upstox.com/v3/historical-candle/intraday/%s/minutes/15";
 
+    // 5-minute candle URLs
+    private static final String BASE_URL_5M     =
+            "https://api.upstox.com/v3/historical-candle/%s/minutes/5/%s/%s";
+    private static final String INTRADAY_URL_5M =
+            "https://api.upstox.com/v3/historical-candle/intraday/%s/minutes/5";
+
     private static final String WEEKLY_URL =
             "https://api.upstox.com/v3/historical-candle/%s/weeks/1/%s/%s";
 
@@ -189,6 +195,76 @@ public class UpstoxHistoricalCandleService {
                 }
                 return;
             }
+        }
+    }
+
+    /**
+     * Fetches all 5-minute candles for a single instrument on a single date.
+     * Uses the same rate limiting and retry logic as fetchDayCandles.
+     */
+    public List<Candle> fetch5mDayCandles(String instrumentKey, LocalDate date) {
+        int attempt = 0;
+        long backoffMs = config.getInitialBackoffMs();
+
+        while (attempt <= config.getMaxRetries()) {
+            try {
+                acquireRateLimit();
+                List<Candle> result = fetch5mDayCandlesInternal(instrumentKey, date);
+                if (!result.isEmpty() || attempt == config.getMaxRetries()) {
+                    return result;
+                }
+                log.warn("Empty 5m result for {} on {} — retry {}/{}", instrumentKey, date, attempt + 1, config.getMaxRetries());
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return Collections.emptyList();
+            } catch (HttpClientErrorException.TooManyRequests e) {
+                log.warn("Rate limited (5m) for {} on {} — retry {}/{} after {}ms",
+                        instrumentKey, date, attempt + 1, config.getMaxRetries(), backoffMs);
+                if (attempt == config.getMaxRetries()) return Collections.emptyList();
+                try { Thread.sleep(backoffMs); } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt(); return Collections.emptyList();
+                }
+                backoffMs *= 2;
+            }
+            attempt++;
+        }
+        return Collections.emptyList();
+    }
+
+    private List<Candle> fetch5mDayCandlesInternal(String instrumentKey, LocalDate date) {
+        String encodedKey = instrumentKey.replace("|", "%7C").replace(" ", "%20");
+        String dateStr    = date.format(DATE_FMT);
+        String rawUrl = date.equals(LocalDate.now())
+                ? String.format(INTRADAY_URL_5M, encodedKey)
+                : String.format(BASE_URL_5M, encodedKey, dateStr, dateStr);
+
+        java.net.URI uri;
+        try {
+            uri = org.springframework.web.util.UriComponentsBuilder
+                    .fromUriString(rawUrl).build(true).toUri();
+        } catch (Exception e) {
+            log.error("Failed to build 5m URI for {}: {}", instrumentKey, e.getMessage());
+            return Collections.emptyList();
+        }
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(upstoxTokenService.getAccessToken());
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+
+            ResponseEntity<String> response = restTemplate.exchange(
+                    uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                log.warn("Upstox 5m API returned {} for {} on {}", response.getStatusCode(), instrumentKey, date);
+                return Collections.emptyList();
+            }
+            return parseCandles(response.getBody(), instrumentKey, date);
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to fetch 5m candles for {} on {}: {}", instrumentKey, date, e.getMessage());
+            return Collections.emptyList();
         }
     }
 

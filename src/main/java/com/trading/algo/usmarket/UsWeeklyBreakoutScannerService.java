@@ -1,9 +1,25 @@
 package com.trading.algo.usmarket;
 
 import com.trading.algo.discord.DiscordService;
-import com.trading.algo.dtos.UsWeeklyBreakoutState;import com.trading.algo.dtos.UsWeeklyBreakoutStateStore;import com.trading.algo.entity.UsCandle;import com.trading.algo.telegram.TelegramService;import jakarta.annotation.PostConstruct;import org.slf4j.Logger;import org.slf4j.LoggerFactory;import org.springframework.scheduling.annotation.Scheduled;import org.springframework.stereotype.Service;
+import com.trading.algo.dtos.UsWeeklyBreakoutState;
+import com.trading.algo.dtos.UsWeeklyBreakoutStateStore;
+import com.trading.algo.entity.UsCandle;
+import com.trading.algo.telegram.TelegramService;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;import java.io.InputStreamReader;import java.time.DayOfWeek;import java.time.LocalDate;import java.util.ArrayList;import java.util.Collections;import java.util.List;import java.util.Map;import java.util.concurrent.CopyOnWriteArrayList;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
 
@@ -186,6 +202,8 @@ public class UsWeeklyBreakoutScannerService {
         // Batch fetch daily candles — all active tickers in one pass
         Map<String, List<UsCandle>> dailyBatch = marketDataService.fetchDailyBatch(activeTickers, 2);
 
+        List<String> buyMessages  = new ArrayList<>();
+        List<String> sellMessages = new ArrayList<>();
         int buyFired = 0, sellFired = 0;
         for (String ticker : activeTickers) {
             UsWeeklyBreakoutState state = stateStore.get(ticker);
@@ -194,8 +212,6 @@ public class UsWeeklyBreakoutScannerService {
             List<UsCandle> daily = dailyBatch.getOrDefault(ticker, Collections.emptyList());
             if (daily.isEmpty()) continue;
 
-            // Calculate current week's close from the latest daily candle
-            // (Yahoo's weekly candles for current week are incomplete/malformed)
             double currentWeeklyClose = daily.get(daily.size() - 1).getClose();
             log.info("[US-WEEKLY][WEEKLY-DATA] {} → CurrentWeekClose calculated from daily: {}",
                     ticker, currentWeeklyClose);
@@ -213,14 +229,12 @@ public class UsWeeklyBreakoutScannerService {
 
             if (!state.isBuyAlerted()) {
                 if (dClose > state.getWeeklyHigh() && currentWeeklyClose > state.getWeeklyHigh()) {
-              //      if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
                         state.setWeeklyLow(state.getPrevDailyLow());
-                        sendBuyAlert(state, today);
+                        String msg = buildBuyAlert(state, today);
+                        telegramService.sendMessage(msg);
+                        buyMessages.add(msg);
                         state.setBuyAlerted(true);
                         buyFired++;
-              //      } else {
-                  //      log.debug("[US-WEEKLY] {} BUY skipped — low volume", ticker);
-                //    }
                 } else if (dHigh > state.getWeeklyHigh()) {
                     state.setWeeklyHigh(dHigh);
                 }
@@ -228,14 +242,12 @@ public class UsWeeklyBreakoutScannerService {
 
             if (!state.isSellAlerted()) {
                 if (dClose < state.getWeeklyLow()) {
-          //          if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
                         state.setWeeklyHigh(state.getPrevDailyHigh());
-                        sendSellAlert(state, today);
+                        String msg = buildSellAlert(state, today);
+                        telegramService.sendMessage(msg);
+                        sellMessages.add(msg);
                         state.setSellAlerted(true);
                         sellFired++;
-            //        } else {
-              //          log.debug("[US-WEEKLY] {} SELL skipped — low volume", ticker);
-                //    }
                 } else if (dLow < state.getWeeklyLow()) {
                     state.setWeeklyLow(dLow);
                 }
@@ -244,6 +256,11 @@ public class UsWeeklyBreakoutScannerService {
             state.setPrevDailyHigh(dHigh);
             state.setPrevDailyLow(dLow);
         }
+
+        // Send all BUY alerts as one Discord message, SELL alerts as another
+        if (!buyMessages.isEmpty())  discordService.sendMessage(String.join("\n\n", buyMessages));
+        if (!sellMessages.isEmpty()) discordService.sendMessage(String.join("\n\n", sellMessages));
+
         log.info("[US-WEEKLY] Scan done → BUY:{} SELL:{}", buyFired, sellFired);
     }
 
@@ -279,6 +296,8 @@ public class UsWeeklyBreakoutScannerService {
         // Batch fetch 7 daily candles for all tickers in one pass
         Map<String, List<UsCandle>> dailyBatch = marketDataService.fetchDailyBatch(activeTickers, 7);
 
+        List<String> buyMessages  = new ArrayList<>();
+        List<String> sellMessages = new ArrayList<>();
         int totalBuy = 0, totalSell = 0;
         for (String ticker : activeTickers) {
             UsWeeklyBreakoutState state = stateStore.get(ticker);
@@ -287,8 +306,6 @@ public class UsWeeklyBreakoutScannerService {
             List<UsCandle> daily = dailyBatch.getOrDefault(ticker, Collections.emptyList());
             if (daily.isEmpty()) continue;
 
-            // Calculate current week's close from the latest daily candle
-            // (Yahoo's weekly candles for current week are incomplete/malformed)
             double currentWeeklyClose = daily.get(daily.size() - 1).getClose();
             log.info("[US-WEEKLY][WEEKLY-DATA] {} → CurrentWeekClose calculated from daily: {}",
                     ticker, currentWeeklyClose);
@@ -301,11 +318,9 @@ public class UsWeeklyBreakoutScannerService {
                         .findFirst().orElse(null);
                 if (candle == null) continue;
 
-                double dHigh   = candle.getHigh();
-                double dLow    = candle.getLow();
-                double dClose  = candle.getClose();
-                long   dVolume = candle.getVolume();
-                long   avgDVol = state.getWeeklyVolume() / 5;
+                double dHigh  = candle.getHigh();
+                double dLow   = candle.getLow();
+                double dClose = candle.getClose();
 
                 log.info("[US-WEEKLY][SCAN-WEEK] {} → Date={} Close={} High={} Low={} | WeeklyHigh={} WeeklyLow={} | CurrentWeeklyClose={}",
                         ticker, candle.getDate(), dClose, dHigh, dLow,
@@ -313,12 +328,12 @@ public class UsWeeklyBreakoutScannerService {
 
                 if (!state.isBuyAlerted()) {
                     if (dClose > state.getWeeklyHigh() && currentWeeklyClose > state.getWeeklyHigh()) {
-                //        if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
-                            state.setWeeklyLow(state.getPrevDailyLow());
-                            sendBuyAlert(state, candle);
-                            state.setBuyAlerted(true);
-                            totalBuy++;
-        //                }
+                        state.setWeeklyLow(state.getPrevDailyLow());
+                        String msg = buildBuyAlert(state, candle);
+                        telegramService.sendMessage(msg);
+                        buyMessages.add(msg);
+                        state.setBuyAlerted(true);
+                        totalBuy++;
                     } else if (dHigh > state.getWeeklyHigh()) {
                         state.setWeeklyHigh(dHigh);
                     }
@@ -326,12 +341,12 @@ public class UsWeeklyBreakoutScannerService {
 
                 if (!state.isSellAlerted()) {
                     if (dClose < state.getWeeklyLow()) {
-             //           if (dVolume >= (long)(avgDVol * MIN_VOLUME_MULTIPLIER)) {
-                            state.setWeeklyHigh(state.getPrevDailyHigh());
-                            sendSellAlert(state, candle);
-                            state.setSellAlerted(true);
-                            totalSell++;
-      //                  }
+                        state.setWeeklyHigh(state.getPrevDailyHigh());
+                        String msg = buildSellAlert(state, candle);
+                        telegramService.sendMessage(msg);
+                        sellMessages.add(msg);
+                        state.setSellAlerted(true);
+                        totalSell++;
                     } else if (dLow < state.getWeeklyLow()) {
                         state.setWeeklyLow(dLow);
                     }
@@ -341,6 +356,9 @@ public class UsWeeklyBreakoutScannerService {
                 state.setPrevDailyLow(dLow);
             }
         }
+
+        if (!buyMessages.isEmpty())  discordService.sendMessage(String.join("\n\n", buyMessages));
+        if (!sellMessages.isEmpty()) discordService.sendMessage(String.join("\n\n", sellMessages));
 
         log.info("[US-WEEKLY] scan-week done → BUY:{} SELL:{}", totalBuy, totalSell);
         return new int[]{totalBuy, totalSell};
@@ -380,8 +398,8 @@ public class UsWeeklyBreakoutScannerService {
         return tickers;
     }
 
-    // ── Telegram alerts ───────────────────────────────────────────────────────
-    private void sendBuyAlert(UsWeeklyBreakoutState state, UsCandle candle) {
+    // ── Alert builders ────────────────────────────────────────────────────────
+    private String buildBuyAlert(UsWeeklyBreakoutState state, UsCandle candle) {
         double close     = candle.getClose();
         double slLevel   = state.getPrevDailyLow();
         double riskPct   = ((close - slLevel) / close) * 100.0;
@@ -390,7 +408,11 @@ public class UsWeeklyBreakoutScannerService {
         double prevWkChg = state.getPrevWeekClose() > 0
                 ? ((close - state.getPrevWeekClose()) / state.getPrevWeekClose()) * 100.0 : 0;
 
-        String message = String.format(
+        log.info("[US-WEEKLY] 🟢 BUY  {} @ ${} | weeklyH ${} | SL ${} ({}% risk)",
+                state.getTicker(), close, state.getWeeklyHigh(), slLevel,
+                String.format("%.2f", riskPct));
+
+        return String.format(
                 "🇺🇸🟢 *US WEEKLY BUY BREAKOUT*%n" +
                         "📌 *%s*%n" +
                         "────────────────%n" +
@@ -411,16 +433,9 @@ public class UsWeeklyBreakoutScannerService {
                 candle.getHigh(), candle.getLow(),
                 candle.getVolume(),
                 candle.getDate());
-
-        telegramService.sendMessage(message);
-        discordService.sendMessage(state.getTicker());
-
-        log.info("[US-WEEKLY] 🟢 BUY  {} @ ${} | weeklyH ${} | SL ${} ({}% risk)",
-                state.getTicker(), close, state.getWeeklyHigh(), slLevel,
-                String.format("%.2f", riskPct));
     }
 
-    private void sendSellAlert(UsWeeklyBreakoutState state, UsCandle candle) {
+    private String buildSellAlert(UsWeeklyBreakoutState state, UsCandle candle) {
         double close     = candle.getClose();
         double slLevel   = state.getPrevDailyHigh();
         double riskPct   = ((slLevel - close) / close) * 100.0;
@@ -429,7 +444,11 @@ public class UsWeeklyBreakoutScannerService {
         double prevWkChg = state.getPrevWeekClose() > 0
                 ? ((close - state.getPrevWeekClose()) / state.getPrevWeekClose()) * 100.0 : 0;
 
-        String message = String.format(
+        log.info("[US-WEEKLY] 🔴 SELL {} @ ${} | weeklyL ${} | SL ${} ({}% risk)",
+                state.getTicker(), close, state.getWeeklyLow(), slLevel,
+                String.format("%.2f", riskPct));
+
+        return String.format(
                 "🇺🇸🔴 *US WEEKLY SELL BREAKDOWN*%n" +
                         "📌 *%s*%n" +
                         "────────────────%n" +
@@ -449,11 +468,4 @@ public class UsWeeklyBreakoutScannerService {
                 candle.getHigh(), candle.getLow(),
                 candle.getVolume(),
                 candle.getDate());
-
-        telegramService.sendMessage(message);
-        discordService.sendMessage(state.getTicker());
-
-        log.info("[US-WEEKLY] 🔴 SELL {} @ ${} | weeklyL ${} | SL ${} ({}% risk)",
-                state.getTicker(), close, state.getWeeklyLow(), slLevel,
-                String.format("%.2f", riskPct));
     }}

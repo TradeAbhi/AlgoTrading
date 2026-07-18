@@ -13,11 +13,7 @@ import org.springframework.web.client.RestTemplate;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -46,10 +42,10 @@ public class YahooFinanceService {
     private static final ZoneId NY_ZONE    = ZoneId.of("America/New_York");
 
     // Small courtesy delay between calls to avoid IP throttling (not a hard limit)
-    private static final long COURTESY_DELAY_MS = 50L;
+    private static final long COURTESY_DELAY_MS = 20L;
 
     private final RestTemplate restTemplate;
-    private final ExecutorService executorService = Executors.newFixedThreadPool(10);
+    private final ExecutorService executorService = Executors.newFixedThreadPool(20);
 
     public YahooFinanceService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;

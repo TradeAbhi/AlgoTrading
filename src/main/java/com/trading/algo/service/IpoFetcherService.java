@@ -19,7 +19,7 @@ import java.util.List;
 public class IpoFetcherService {
 
     // Base URL for ipoalerts.in — no API key required for free tier
-    private static final String IPO_API_URL = "https://api.ipoalerts.in/ipos?status=upcoming&status=open";
+    private static final String IPO_API_URL = "https://api.ipoalerts.in/ipos?status=upcoming";
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -48,8 +48,8 @@ public class IpoFetcherService {
         List<Ipo> ipos = new ArrayList<>();
         JsonNode root = objectMapper.readTree(json);
 
-        // ipoalerts.in returns { "data": [ {...}, {...} ] }
-        JsonNode dataNode = root.has("data") ? root.get("data") : root;
+        // ipoalerts.in returns { "ipos": [ {...}, {...} ] }
+        JsonNode dataNode = root.has("ipos") ? root.get("ipos") : root.has("data") ? root.get("data") : root;
 
         if (!dataNode.isArray()) {
             log.warn("Unexpected response structure: {}", json.substring(0, Math.min(300, json.length())));
@@ -68,9 +68,33 @@ public class IpoFetcherService {
                 String apiStatus = getText(node, "status");
                 ipo.setStatus(mapStatus(apiStatus));
 
-                log.info("Parsed IPO → {} | Open: {} | Close: {} | Listing: {} | Status: {}",
+                // Parse GMP if available - check multiple possible field names
+                String gmpStr = getText(node, "gmp");
+                if (gmpStr == null || gmpStr.isBlank()) {
+                    gmpStr = getText(node, "greyMarketPremium");
+                }
+                if (gmpStr == null || gmpStr.isBlank()) {
+                    gmpStr = getText(node, "grey_market_premium");
+                }
+                if (gmpStr == null || gmpStr.isBlank()) {
+                    gmpStr = getText(node, "premium");
+                }
+
+                if (gmpStr != null && !gmpStr.isBlank()) {
+                    try {
+                        // GMP might be in format like "₹50" or "50" or "50%" or "₹50 (50%)"
+                        String cleanGmp = gmpStr.replaceAll("[^0-9.-]", "");
+                        if (!cleanGmp.isEmpty()) {
+                            ipo.setGmp(Double.parseDouble(cleanGmp));
+                        }
+                    } catch (Exception e) {
+                        log.warn("Could not parse GMP '{}' for IPO: {}", gmpStr, ipo.getName());
+                    }
+                }
+
+                log.info("Parsed IPO → {} | Open: {} | Close: {} | Listing: {} | Status: {} | GMP: {}",
                         ipo.getName(), ipo.getOpenDate(), ipo.getCloseDate(),
-                        ipo.getListingDate(), ipo.getStatus());
+                        ipo.getListingDate(), ipo.getStatus(), ipo.getGmp());
 
                 ipos.add(ipo);
             } catch (Exception e) {

@@ -1,13 +1,6 @@
 package com.stockanalyzer.service;
 
-import com.stockanalyzer.model.AnalysisConclusion;
-import com.stockanalyzer.model.AnalysisResponse;
-import com.stockanalyzer.model.Candle;
-import com.stockanalyzer.model.CandleWindow;
-import com.stockanalyzer.model.MarketStructureResult;
-import com.stockanalyzer.model.OrderFlowResult;
-import com.stockanalyzer.model.Timeframe;
-import com.stockanalyzer.model.VolumeConfirmationResult;
+import com.stockanalyzer.model.*;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;

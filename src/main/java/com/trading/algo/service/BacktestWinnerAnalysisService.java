@@ -1,7 +1,6 @@
 package com.trading.algo.service;
 
 import com.trading.algo.dtos.Candle;
-import com.trading.algo.dtos.WatchlistItem;
 import com.trading.algo.entity.BacktestTrade;
 import com.trading.algo.entity.BacktestWinnerAnalysis;
 import com.trading.algo.repo.BacktestTradeRepository;

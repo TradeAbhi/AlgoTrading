@@ -1,11 +1,13 @@
 package com.trading.algo.delta.model;
-import java.time.LocalDate;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 
 /**
  * Represents a triggered alert for the daily breakout strategy.

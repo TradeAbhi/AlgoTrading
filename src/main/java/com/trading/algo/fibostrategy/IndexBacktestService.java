@@ -19,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -92,9 +93,15 @@ public class IndexBacktestService {
                     continue;
                 }
 
+                // Fetch previous day OHLC data
+                Map<String, Double> prevDayOhlc = fetchPrevDayOhlc(indexName.instrumentKey, date);
+                Double prevDayHigh = prevDayOhlc != null ? prevDayOhlc.get("high") : null;
+                Double prevDayLow = prevDayOhlc != null ? prevDayOhlc.get("low") : null;
+                Double prevDayClose = prevDayOhlc != null ? prevDayOhlc.get("close") : null;
+
                 // Reuse the same strategy service — same rules apply to indexes
                 Optional<com.trading.algo.entity.BacktestTrade> result =
-                        strategy.evaluate(indexName.name(), date, candles);
+                        strategy.evaluate(indexName.name(), date, candles, -1.0, 0.0, 0, config.getFixedRiskRupees(), prevDayHigh, prevDayLow, prevDayClose, 0.0, 0.0, 0.0, 0.0);
 
                 if (result.isPresent()) {
                     com.trading.algo.entity.BacktestTrade t = result.get();
@@ -118,6 +125,9 @@ public class IndexBacktestService {
                             .pnlPercent(t.getPnlPercent())
                             .actualRR(t.getActualRR())
                             .exitCandleTime(t.getExitCandleTime())
+                            .prevDayHigh(t.getPrevDayHigh())
+                            .prevDayLow(t.getPrevDayLow())
+                            .prevDayClose(t.getPrevDayClose())
                             .createdAt(LocalDateTime.now())
                             .build();
 
@@ -212,6 +222,33 @@ public class IndexBacktestService {
             d = d.plusDays(1);
         }
         return days;
+    }
+
+    /**
+     * Fetch previous day's OHLC data for the given instrument key and date.
+     * Returns a map with "high", "low", "close" keys, or null if unavailable.
+     */
+    private Map<String, Double> fetchPrevDayOhlc(String instrumentKey, LocalDate date) {
+        try {
+            LocalDate prevDate = date.minusDays(1);
+            // Skip weekends
+            while (prevDate.getDayOfWeek() == DayOfWeek.SATURDAY || prevDate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                prevDate = prevDate.minusDays(1);
+            }
+            List<Candle> dailyCandles = candleService.fetchDailyCandles(instrumentKey, prevDate, prevDate);
+            if (dailyCandles.isEmpty()) {
+                return null;
+            }
+            Candle prevDayCandle = dailyCandles.get(0);
+            return Map.of(
+                    "high", prevDayCandle.getHigh(),
+                    "low", prevDayCandle.getLow(),
+                    "close", prevDayCandle.getClose()
+            );
+        } catch (Exception e) {
+            log.debug("Previous day OHLC fetch failed for {}: {}", instrumentKey, e.getMessage());
+            return null;
+        }
     }
 }
 //import java.time.DayOfWeek;

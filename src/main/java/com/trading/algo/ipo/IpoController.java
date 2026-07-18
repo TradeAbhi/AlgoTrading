@@ -1,6 +1,7 @@
 package com.trading.algo.ipo;
 
 import com.trading.algo.discord.DiscordService;
+import com.trading.algo.service.IpoGmpAlertService;
 import com.trading.algo.service.IpoMonitorService;
 import com.trading.algo.service.IpoService;
 import com.trading.algo.service.IpoStrategyMonitorService;
@@ -38,6 +39,7 @@ public class IpoController {
     private final IpoRepository       ipoRepository;
     private final IpoCsvImportService ipoCsvImportService;
     private final IpoStrategyMonitorService ipoStrategyMonitorService;
+    private final IpoGmpAlertService ipoGmpAlertService;
     private final TelegramService    telegramService;
     private final DiscordService     discordService;
 
@@ -144,5 +146,21 @@ public class IpoController {
         telegramService.sendMessage(message);
         discordService.sendMessage(message);
         return ResponseEntity.ok(Map.of("status", "CSV upload reminder sent"));
+    }
+
+    /** Check for upcoming mainboard IPOs and send alerts */
+    @PostMapping("/gmp-check")
+    public ResponseEntity<Map<String, String>> gmpCheck() {
+        log.info("POST /api/ipo/gmp-check");
+        ipoGmpAlertService.manualGmpCheck();
+        return ResponseEntity.ok(Map.of("status", "Mainboard IPO check complete"));
+    }
+
+    /** Get summary of upcoming mainboard IPOs */
+    @GetMapping("/gmp-summary")
+    public ResponseEntity<Map<String, String>> gmpSummary() {
+        log.info("GET /api/ipo/gmp-summary");
+        String summary = ipoGmpAlertService.getGmpSummary();
+        return ResponseEntity.ok(Map.of("summary", summary));
     }
 }

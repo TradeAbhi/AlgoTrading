@@ -1,9 +1,6 @@
 package com.stockanalyzer.model;
 
 
-import com.stockanalyzer.model.Candle;
-import com.stockanalyzer.model.Timeframe;
-
 import java.time.LocalDateTime;
 import java.util.List;
 

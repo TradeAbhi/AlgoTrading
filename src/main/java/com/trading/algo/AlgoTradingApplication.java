@@ -11,7 +11,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableAsync
 @ComponentScan(basePackages = {"com.trading.algo", "com.stockanalyzer"})
 
-public class AlgoTradingApplication {
+public class  AlgoTradingApplication {
 
 	public static void main(String[] args) {
 		SpringApplication.run(AlgoTradingApplication.class, args);

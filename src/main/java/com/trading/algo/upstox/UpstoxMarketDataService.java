@@ -123,10 +123,9 @@ public class UpstoxMarketDataService {
         }
 
         JsonNode data = root.path("data");
-        Iterator<Map.Entry<String, JsonNode>> fields = data.fields();
+        Set<Map.Entry<String, JsonNode>> fields = data.properties();
 
-        while (fields.hasNext()) {
-            Map.Entry<String, JsonNode> entry = fields.next();
+        for (Map.Entry<String, JsonNode> entry : fields) {
             String key = entry.getKey();             // "NSE_EQ:RELIANCE"
             JsonNode quote = entry.getValue();
 

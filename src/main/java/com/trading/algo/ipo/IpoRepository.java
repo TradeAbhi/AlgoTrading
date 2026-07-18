@@ -28,4 +28,10 @@ public interface IpoRepository extends JpaRepository<Ipo, Long> {
 
     // IPOs listing in next N days
     List<Ipo> findByListingDateBetweenOrderByListingDateAsc(LocalDate from, LocalDate to);
+
+    // IPOs with good GMP that haven't been alerted yet
+    List<Ipo> findByGmpGreaterThanEqualAndAlertGmpSentFalse(Double gmpThreshold);
+
+    // Find IPOs by status
+    List<Ipo> findByStatusIn(List<String> statuses);
 }

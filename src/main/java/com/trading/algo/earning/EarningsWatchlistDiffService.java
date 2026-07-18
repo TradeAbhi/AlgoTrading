@@ -184,7 +184,7 @@ public class EarningsWatchlistDiffService {
         sb.append("Unchanged: ").append(unchanged.size())
           .append(" | Total now: ").append(toAddRows.size() + unchanged.size());
 
-        telegramService.sendMessage(sb.toString());
+        telegramService.sendMessageToEarnings(sb.toString());
         log.info("Diff alert sent to Telegram");
     }
 }

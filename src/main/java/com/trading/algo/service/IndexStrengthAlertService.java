@@ -87,7 +87,7 @@ public class IndexStrengthAlertService {
         }
 
         strengths.sort(Comparator.comparingInt(IndexStrength::score).reversed());
-        telegramService.sendMessage(buildMessage(title, strengths, now));
+        telegramService.sendMessageToIndex(buildMessage(title, strengths, now));
     }
 
     private List<IndexStrength> scanIndices(LocalDate date) {
@@ -195,7 +195,13 @@ public class IndexStrengthAlertService {
         appendRows(sb, weakest);
 
         sb.append("\n*All Indices*\n");
-        appendRows(sb, strengths);
+        List<IndexStrength> leadersAndWeakest = new ArrayList<>();
+        leadersAndWeakest.addAll(leaders);
+        leadersAndWeakest.addAll(weakest);
+        List<IndexStrength> remainingIndices = strengths.stream()
+                .filter(s -> !leadersAndWeakest.contains(s))
+                .toList();
+        appendRows(sb, remainingIndices);
 
         return sb.toString();
     }

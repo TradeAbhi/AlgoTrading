@@ -107,6 +107,119 @@ public class MarketSentimentService {
 		return result;
 	}
 
+	/**
+	 * Fetch Nifty VWAP for market trend filter.
+	 * VWAP = Σ(Price × Volume) / Σ(Volume) calculated from intraday candles.
+	 * Returns 0.0 if unavailable.
+	 */
+	public double fetchNiftyVWAP() {
+		try {
+			String token = upstoxTokenService.getAccessToken();
+			if (token.isBlank()) {
+				log.warn("[VWAP] Upstox token not set");
+				return 0.0;
+			}
+
+			String encodedKey = NIFTY_KEY.replace("|", "%7C").replace(" ", "%20");
+			String url = UPSTOX_BASE + "/historical-candle/" + encodedKey + "/intraday/minutes/1";
+
+			HttpRequest request = HttpRequest.newBuilder()
+					.uri(URI.create(url))
+					.timeout(Duration.ofSeconds(15))
+					.header("Authorization", "Bearer " + token)
+					.header("Accept", "application/json")
+					.header("Api-Version", "2.0")
+					.GET()
+					.build();
+
+			HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+
+			if (response.statusCode() != 200) {
+				log.warn("[VWAP] HTTP {} from Upstox", response.statusCode());
+				return 0.0;
+			}
+
+			JsonNode root = objectMapper.readTree(decompress(response));
+			JsonNode candles = root.path("data").path("candles");
+
+			if (!candles.isArray()) {
+				log.warn("[VWAP] No candles array in response");
+				return 0.0;
+			}
+
+			double sumPriceVolume = 0.0;
+			long sumVolume = 0;
+
+			for (JsonNode c : candles) {
+				if (!c.isArray() || c.size() < 6) continue;
+				double price = c.get(4).asDouble(); // close price
+				long volume = c.get(5).asLong();    // volume
+				sumPriceVolume += price * volume;
+				sumVolume += volume;
+			}
+
+			if (sumVolume == 0) {
+				log.warn("[VWAP] Total volume is 0");
+				return 0.0;
+			}
+
+			double vwap = sumPriceVolume / sumVolume;
+			log.info("[VWAP] Nifty VWAP = {}", fmt2(vwap));
+			return vwap;
+
+		} catch (Exception e) {
+			log.error("[VWAP] Failed: {}", e.getMessage());
+			return 0.0;
+		}
+	}
+
+	/**
+	 * Fetch current Nifty price for comparison with VWAP.
+	 * Returns 0.0 if unavailable.
+	 */
+	public double fetchNiftyPrice() {
+		try {
+			String token = upstoxTokenService.getAccessToken();
+			if (token.isBlank()) return 0.0;
+
+			String encodedKey = NIFTY_KEY.replace("|", "%7C").replace(" ", "%20");
+			String url = UPSTOX_BASE + "/market-quote/quotes?instrument_key=" + encodedKey;
+
+			HttpRequest request = HttpRequest.newBuilder()
+					.uri(URI.create(url))
+					.timeout(Duration.ofSeconds(15))
+					.header("Authorization", "Bearer " + token)
+					.header("Accept", "application/json")
+					.header("Api-Version", "2.0")
+					.GET()
+					.build();
+
+			HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+
+			if (response.statusCode() != 200) return 0.0;
+
+			JsonNode root = objectMapper.readTree(decompress(response));
+			JsonNode data = root.path("data");
+			JsonNode quote = data.get(NIFTY_KEY);
+			if (quote == null) quote = pathFirst(data);
+
+			if (quote != null) {
+				double ltp = quote.path("last_price").asDouble(0);
+				log.info("[Nifty] LTP = {}", fmt2(ltp));
+				return ltp;
+			}
+
+		} catch (Exception e) {
+			log.error("[Nifty] Failed: {}", e.getMessage());
+		}
+		return 0.0;
+	}
+
+	private JsonNode pathFirst(JsonNode node) {
+		if (node.isArray() && node.size() > 0) return node.get(0);
+		return null;
+	}
+
 	// -------------------------------------------------------------------------
 	// HTTP HELPERS (NO CHANGE)
 	// -------------------------------------------------------------------------
@@ -199,7 +312,7 @@ public class MarketSentimentService {
 					.append("% advancing)\n");
 			sb.append("Signal : ").append(signal).append(" ").append(emoji).append("\n");
 
-			telegramService.sendMessage(sb.toString());
+			telegramService.sendMessageToIntraday(sb.toString());
 			log.info("A/D alert sent — advances={} declines={} ratio={} signal={}", advances, declines, fmt2(adRatio),
 					signal);
 
@@ -235,7 +348,7 @@ public class MarketSentimentService {
 	        appendFIIDII(sb);
 	        appendNiftyOI(sb);
 	        appendSentimentConclusion(sb);
-	        telegramService.sendMessage(sb.toString());
+	        telegramService.sendMessageToIntraday(sb.toString());
 	    }
 	 
 	    @Scheduled(cron = "0 */30 9-15 * * MON-FRI")
@@ -243,8 +356,8 @@ public class MarketSentimentService {
 	        try {
 	            double pcr = fetchPCR();
 	            if (pcr <= 0) return;
-	            if (pcr < 0.7)      telegramService.sendMessage("PCR EXTREME BEARISH: " + fmt2(pcr) + " at " + timeNow());
-	            else if (pcr > 1.5) telegramService.sendMessage("PCR EXTREME BULLISH: " + fmt2(pcr) + " at " + timeNow());
+	            if (pcr < 0.7)      telegramService.sendMessageToIntraday("PCR EXTREME BEARISH: " + fmt2(pcr) + " at " + timeNow());
+	            else if (pcr > 1.5) telegramService.sendMessageToIntraday("PCR EXTREME BULLISH: " + fmt2(pcr) + " at " + timeNow());
 	        } catch (Exception e) { System.err.println("[PCR extreme alert] " + e.getMessage()); }
 	    }
 	 
@@ -252,7 +365,7 @@ public class MarketSentimentService {
 	    public void vixSpikeAlert() {
 	        try {
 	            double vix = fetchVIX();
-	            if (vix > 20) telegramService.sendMessage("VIX SPIKE: " + fmt2(vix) + " at " + timeNow());
+	            if (vix > 20) telegramService.sendMessageToIntraday("VIX SPIKE: " + fmt2(vix) + " at " + timeNow());
 	        } catch (Exception e) { System.err.println("[VIX spike alert] " + e.getMessage()); }
 	    }
 	 
@@ -265,8 +378,8 @@ public class MarketSentimentService {
 	            int total    = advances + declines;
 	            if (total == 0) return;
 	            double advPct = (advances * 100.0) / total;
-	            if (advPct >= 80)      telegramService.sendMessage("STRONG BREADTH: " + fmt1(advPct) + "% advancing at " + timeNow());
-	            else if (advPct <= 20) telegramService.sendMessage("WEAK BREADTH: only " + fmt1(advPct) + "% advancing at " + timeNow());
+	            if (advPct >= 80)      telegramService.sendMessageToIntraday("STRONG BREADTH: " + fmt1(advPct) + "% advancing at " + timeNow());
+	            else if (advPct <= 20) telegramService.sendMessageToIntraday("WEAK BREADTH: only " + fmt1(advPct) + "% advancing at " + timeNow());
 	        } catch (Exception e) { System.err.println("[Breadth extreme alert] " + e.getMessage()); }
 	    }
 	 
@@ -280,7 +393,7 @@ public class MarketSentimentService {
 	        appendAdvanceDecline(sb);
 	        appendPCR(sb);
 	        appendVIX(sb);
-	        telegramService.sendMessage(sb.toString());
+	        telegramService.sendMessageToIntraday(sb.toString());
 	    }
 	 
 	    private void appendAdvanceDecline(StringBuilder sb) {
@@ -455,7 +568,7 @@ public class MarketSentimentService {
 	        return result;
 	    }
 	 
-	    private double fetchVIX() throws Exception {
+	    public double fetchVIX() throws Exception {
 	        JsonNode root = getNse("/api/allIndices");
 	        JsonNode data = root.path("data");
 	        if (data.isArray()) {

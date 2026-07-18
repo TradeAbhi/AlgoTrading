@@ -48,7 +48,7 @@ public class OpeningCandleStrategyService {
 
     /** Backward-compatible overload — uses full fixedRiskRupees, no external filters */
     public Optional<BacktestTrade> evaluate(String symbol, LocalDate date, List<Candle> candles) {
-        return evaluate(symbol, date, candles, -1.0, 0.0, 0, config.getFixedRiskRupees());
+        return evaluate(symbol, date, candles, -1.0, 0.0, 0, config.getFixedRiskRupees(), null, null, null, 0.0, 0.0, 0.0, 0.0);
     }
 
     /**
@@ -56,10 +56,18 @@ public class OpeningCandleStrategyService {
      * @param dailyAtr    20-day ATR in points (0 = skip filter)
      * @param avgC1Volume 5-day avg 9:15 candle volume (0 = skip filter)
      * @param riskRupees  risk in rupees — may be reduced after consecutive losses (Improvement 10)
+     * @param prevDayHigh previous day's high price (null = unavailable)
+     * @param prevDayLow  previous day's low price (null = unavailable)
+     * @param prevDayClose previous day's close price (null = unavailable)
+     * @param niftyVwap   Nifty VWAP for market trend filter (0 = unavailable)
+     * @param niftyPrice  Current Nifty price for market trend filter (0 = unavailable)
+     * @param vix         India VIX for market trend filter (0 = unavailable)
+     * @param atr5m       5-minute ATR for exhausted moves filter (0 = skip filter)
      */
     public Optional<BacktestTrade> evaluate(String symbol, LocalDate date, List<Candle> candles,
                                             double adRatio, double dailyAtr, long avgC1Volume,
-                                            double riskRupees) {
+                                            double riskRupees, Double prevDayHigh, Double prevDayLow, Double prevDayClose,
+                                            double niftyVwap, double niftyPrice, double vix, double atr5m) {
         log.info("{} {} — evaluating {} candles | wr={} bodyPts={} bodyPct={}% atrRatio={} adRatio={} avgC1Vol={}",
                 symbol, date, candles == null ? 0 : candles.size(),
                 config.getMinWickRatio(), config.getMinCandleBodyPoints(),
@@ -86,7 +94,31 @@ public class OpeningCandleStrategyService {
             return Optional.empty();
         }
 
+        // ── Exhausted moves filter ─────────────────────────────────────────────
+        if (atr5m > 0 && c1.range() > 2.0 * atr5m) {
+            log.info("{} {} — EXHAUSTED MOVE: C1 range={} > 2x ATR5m={}",
+                    symbol, date, String.format("%.2f", c1.range()), String.format("%.2f", atr5m));
+            return Optional.empty();
+        }
+
         Direction direction = c1.isBullish() ? Direction.BUY : Direction.SELL;
+
+        // ── Gap exhaustion filter ───────────────────────────────────────────────
+        if (prevDayClose != null) {
+            double gapPct = direction == Direction.BUY
+                    ? ((c1.getOpen() - prevDayClose) / prevDayClose) * 100.0
+                    : ((prevDayClose - c1.getOpen()) / prevDayClose) * 100.0;
+
+            double movedPct = direction == Direction.BUY
+                    ? ((c1.getHigh() - prevDayClose) / prevDayClose) * 100.0
+                    : ((prevDayClose - c1.getLow()) / prevDayClose) * 100.0;
+
+            if (gapPct > 1.0 && movedPct > 1.5) {
+                log.info("{} {} — GAP EXHAUSTION: gap={} moved={} direction={}", symbol, date,
+                        String.format("%.2f%%", gapPct), String.format("%.2f%%", movedPct), direction);
+                return Optional.empty();
+            }
+        }
 
         // ── A/D trend filter ──────────────────────────────────────────────────
         if (adRatio >= 0) {
@@ -95,6 +127,28 @@ public class OpeningCandleStrategyService {
             if (buyBlocked || sellBlocked) {
                 log.info("{} {} — BLOCKED by A/D filter: adRatio={} direction={}", symbol, date, adRatio, direction);
                 return Optional.empty();
+            }
+        }
+
+        // ── Market trend filter ───────────────────────────────────────────────
+        if (niftyVwap > 0 && niftyPrice > 0) {
+            boolean niftyAboveVwap = niftyPrice > niftyVwap;
+            boolean vixStable = vix > 0 && vix < 20; // VIX < 20 considered stable
+
+            if (direction == Direction.BUY) {
+                // BUY only when: Nifty above VWAP AND A/D > 1.5 AND VIX stable
+                if (!niftyAboveVwap || (adRatio >= 0 && adRatio < 1.5) || !vixStable) {
+                    log.info("{} {} — BLOCKED by market trend filter: niftyAboveVwap={} adRatio={} vixStable={}",
+                            symbol, date, niftyAboveVwap, adRatio, vixStable);
+                    return Optional.empty();
+                }
+            } else {
+                // SELL only when: Nifty below VWAP AND A/D < 0.67
+                if (niftyAboveVwap || (adRatio >= 0 && adRatio >= 0.67)) {
+                    log.info("{} {} — BLOCKED by market trend filter: niftyAboveVwap={} adRatio={}",
+                            symbol, date, niftyAboveVwap, adRatio);
+                    return Optional.empty();
+                }
             }
         }
 
@@ -138,7 +192,7 @@ public class OpeningCandleStrategyService {
 
         // ── STEP 4: Simulate ──────────────────────────────────────────────────
         return Optional.of(simulateTrade(symbol, date, direction, c1, c2,
-                entry, sl, target, risk, candles, riskRupees));
+                entry, sl, target, risk, candles, riskRupees, prevDayHigh, prevDayLow, prevDayClose));
     }
 
     // =========================================================================
@@ -212,7 +266,8 @@ public class OpeningCandleStrategyService {
             String symbol, LocalDate date, Direction direction,
             Candle c1, Candle c2,
             double entry, double sl, double target, double risk,
-            List<Candle> candles, double riskRupees) {
+            List<Candle> candles, double riskRupees,
+            Double prevDayHigh, Double prevDayLow, Double prevDayClose) {
 
         double activeSl       = sl;
         double exitPrice      = entry;
@@ -309,6 +364,9 @@ public class OpeningCandleStrategyService {
                 .outcome(outcome).exitPrice(exitPrice)
                 .pnlPoints(pnlPoints).pnlPercent(pnlPercent).actualRR(actualRR)
                 .exitCandleTime(exitDt)
+                .prevDayHigh(prevDayHigh)
+                .prevDayLow(prevDayLow)
+                .prevDayClose(prevDayClose)
                 .createdAt(java.time.LocalDateTime.now())
                 .build();
     }

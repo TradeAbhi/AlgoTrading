@@ -1,25 +1,18 @@
 package com.trading.algo.delta.service;
 
-import java.math.BigDecimal;
-import java.math.MathContext;
-import java.math.RoundingMode;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import org.springframework.stereotype.Service;
-
 import com.trading.algo.delta.model.BacktestRequest;
 import com.trading.algo.delta.model.BacktestResult;
 import com.trading.algo.delta.model.Candle;
 import com.trading.algo.delta.model.TradeRecord;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+import java.time.ZoneOffset;
+import java.util.*;
 
 /**
  * Backtest engine.

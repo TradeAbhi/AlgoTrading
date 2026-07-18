@@ -36,6 +36,8 @@ public class SchedulerService {
     private final MarketSentimentService       marketSentimentService;
     private final IpoMonitorService            ipoMonitorService;
     private final com.trading.algo.upstox.PortfolioVolumeScanService portfolioVolumeScanService;
+    private final IpoGmpAlertService           ipoGmpAlertService;
+    private final com.trading.algo.broker.CapAllocationAlertService capAllocationAlertService;
 
     // =========================================================================
     // EARNINGS — fetch & save (DO NOT TOUCH)
@@ -81,7 +83,7 @@ public class SchedulerService {
         }
         sb.append("Total: ").append(list.size()).append(" stocks");
 
-        telegramService.sendMessage(sb.toString());
+        telegramService.sendMessageToEarnings(sb.toString());
     }
 
     /**
@@ -109,7 +111,7 @@ public class SchedulerService {
         }
         sb.append("Total: ").append(list.size()).append(" stocks");
 
-        telegramService.sendMessage(sb.toString());
+        telegramService.sendMessageToEarnings(sb.toString());
     }
 
     /**
@@ -137,7 +139,7 @@ public class SchedulerService {
         }
         sb.append("Total: ").append(list.size()).append(" stocks");
 
-        telegramService.sendMessage(sb.toString());
+        telegramService.sendMessageToEarnings(sb.toString());
     }
 
     /**
@@ -158,7 +160,7 @@ public class SchedulerService {
                 .toList();
 
         if (list.isEmpty()) {
-            telegramService.sendMessage(
+            telegramService.sendMessageToEarnings(
                 "📋 No F&O earnings results scheduled in the next 7 days."
             );
             return;
@@ -175,7 +177,7 @@ public class SchedulerService {
         }
         sb.append("Total: ").append(list.size()).append(" F&O stocks");
 
-        telegramService.sendMessage(sb.toString());
+        telegramService.sendMessageToEarnings(sb.toString());
     }
 
 
@@ -204,7 +206,7 @@ public class SchedulerService {
                 .toList();
 
         if (preList.isEmpty() && postList.isEmpty()) {
-            telegramService.sendMessage("📋 No F&O stocks currently in the earnings window.");
+            telegramService.sendMessageToEarnings("📋 No F&O stocks currently in the earnings window.");
             return;
         }
 
@@ -242,7 +244,7 @@ public class SchedulerService {
           .append(" | Post: ").append(postList.size())
           .append(" | Total: ").append(preList.size() + postList.size()).append(" F&O stocks");
 
-        telegramService.sendMessage(sb.toString());
+        telegramService.sendMessageToEarnings(sb.toString());
 
         // Save snapshot of what was just sent — used by /diff endpoint
         List<String> sentSymbols = new java.util.ArrayList<>();
@@ -376,7 +378,7 @@ public class SchedulerService {
         List<com.trading.algo.ipo.Ipo> upcoming = ipoRepo.findByListingDateBetween(
                 today.plusDays(10), today.plusDays(10));
         for (com.trading.algo.ipo.Ipo ipo : upcoming) {
-            if (!ipo.isAlert10DaySent()) {
+            if (ipo.getAlert10DaySent() == null || !ipo.getAlert10DaySent()) {
                 telegramService.sendMessage(
                     "📅 IPO Listing Soon (10 Days)\n" + ipo.getName() +
                     "\nListing: " + ipo.getListingDate());
@@ -388,7 +390,7 @@ public class SchedulerService {
         // IPO open day
         List<com.trading.algo.ipo.Ipo> opening = ipoRepo.findByOpenDate(today);
         for (com.trading.algo.ipo.Ipo ipo : opening) {
-            if (!ipo.isAlertOpenSent()) {
+            if (ipo.getAlertOpenSent() == null || !ipo.getAlertOpenSent()) {
                 telegramService.sendMessage("🚀 IPO OPEN TODAY\n" + ipo.getName());
                 ipo.setAlertOpenSent(true);
                 ipoRepo.save(ipo);
@@ -398,7 +400,7 @@ public class SchedulerService {
         // Listing day — basic alert
         List<com.trading.algo.ipo.Ipo> listing = ipoRepo.findByListingDate(today);
         for (com.trading.algo.ipo.Ipo ipo : listing) {
-            if (!ipo.isAlertListingSent()) {
+            if (ipo.getAlertListingSent() == null || !ipo.getAlertListingSent()) {
                 telegramService.sendMessage("📈 IPO LISTING TODAY\n" + ipo.getName());
                 ipo.setAlertListingSent(true);
                 ipoRepo.save(ipo);
@@ -425,6 +427,13 @@ public class SchedulerService {
         ipoService.syncIpos();
     }
 
+    // ── 10:00 AM — Alert for upcoming mainboard IPOs ───────
+    @Scheduled(cron = "0 0 10 * * *", zone = "Asia/Kolkata")
+    public void ipoGmpAlert() {
+        log.info("Upcoming mainboard IPO alert check — 10:00 AM");
+        ipoGmpAlertService.checkAndAlertGoodGmp();
+    }
+
     // =========================================================================
     // PORTFOLIO VOLUME SCAN — 3:35 PM daily after market close
     // =========================================================================
@@ -438,6 +447,16 @@ public class SchedulerService {
     public void portfolioVolumeScan() {
         log.info("Portfolio volume scan scheduler fired — 3:35 PM");
         portfolioVolumeScanService.scanPortfolioForVolumeSpike();
+    }
+
+    // =========================================================================
+    // CAP ALLOCATION CHECK — daily at 9:30 AM after market open
+    // =========================================================================
+
+    @Scheduled(cron = "0 30 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void capAllocationCheck() {
+        log.info("Cap allocation check scheduler fired — 9:30 AM");
+        capAllocationAlertService.checkAndAlert();
     }
 
     // =========================================================================

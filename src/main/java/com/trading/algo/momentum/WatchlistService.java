@@ -1,23 +1,30 @@
 package com.trading.algo.momentum;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trading.algo.config.WatchlistConfig;
 import com.trading.algo.dtos.WatchlistCategory;
 import com.trading.algo.dtos.WatchlistItem;
 import com.trading.algo.dtos.WatchlistResponse;
+import com.trading.algo.entity.WatchlistSnapshot;
+import com.trading.algo.repo.WatchlistSnapshotRepository;
 import com.trading.algo.service.UniverseService;
 import com.trading.algo.upstox.UpstoxMarketDataService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -45,11 +52,18 @@ public class WatchlistService {
     private final UpstoxMarketDataService marketDataService;
     private final AverageVolumeService    averageVolumeService;
     private final UniverseService         universeService;
-    private final WatchlistConfig         config;
+    private final WatchlistConfig            config;
+    private final WatchlistSnapshotRepository snapshotRepo;
+    private final ObjectMapper                objectMapper;
+    private final com.trading.algo.upstox.UpstoxTokenService upstoxTokenService;
+    private final com.trading.algo.upstox.UpstoxInstrumentMasterService instrumentMasterService;
 
     /** Fast O(1) F&O eligibility check — secondary guard against non-F&O data */
     private static final Set<String> FNO_SYMBOL_SET =
             Set.copyOf(UniverseService.NIFTY_FNO_SYMBOLS);
+
+    /** Ensures the missed-snapshot check runs at most once per app lifecycle */
+    private final AtomicBoolean startupCheckDone = new AtomicBoolean(false);
 
     // -------------------------------------------------------------------------
     // Public API
@@ -84,7 +98,7 @@ public class WatchlistService {
     // Scheduler: refresh every `cacheTtlSeconds` on weekdays during market hours
     // -------------------------------------------------------------------------
 
-    @Scheduled(fixedRateString = "#{watchlistConfig.cacheTtlSeconds * 1000}")
+    @Scheduled(fixedRateString = "#{watchlistConfig.cacheTtlSeconds * 1000}", initialDelayString = "#{watchlistConfig.cacheTtlSeconds * 1000}")
     @CacheEvict(value = "watchlist", key = "'live'")
     public void refreshWatchlist() {
         LocalTime now = LocalTime.now();
@@ -94,10 +108,104 @@ public class WatchlistService {
     }
 
     // -------------------------------------------------------------------------
+    // Daily snapshot: save watchlist at market close for backfill
+    // -------------------------------------------------------------------------
+
+    /**
+     * Saves a snapshot of the watchlist at 3:35 PM (after market close).
+     * This snapshot is used for backfilling mover analysis when the application was not running.
+     */
+    @Scheduled(cron = "0 35 15 * * MON-FRI", zone = "Asia/Kolkata")
+    @Transactional
+    public void saveDailySnapshot() {
+        saveSnapshotForDate(LocalDate.now());
+    }
+
+    /**
+     * On startup: check if today's or the last trading day's snapshot was missed
+     * (e.g. app was down at 3:35 PM) and save it now if after market close.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void saveSnapshotOnStartupIfMissed() {
+        if (!upstoxTokenService.isAuthenticated()) {
+            log.info("Startup snapshot check skipped — Upstox not authenticated yet");
+            return;
+        }
+        runMissedSnapshotCheck();
+    }
+
+    /**
+     * Called after Upstox OAuth completes. Runs the missed-snapshot check
+     * only if it hasn't already run during startup.
+     */
+    public void trySnapshotAfterAuth() {
+        runMissedSnapshotCheck();
+    }
+
+    private void runMissedSnapshotCheck() {
+        if (!startupCheckDone.compareAndSet(false, true)) {
+            log.info("Missed-snapshot check already ran, skipping");
+            return;
+        }
+
+        LocalDate today = LocalDate.now();
+        LocalTime now = LocalTime.now();
+        boolean isWeekday = today.getDayOfWeek() != DayOfWeek.SATURDAY
+                         && today.getDayOfWeek() != DayOfWeek.SUNDAY;
+
+        if (isWeekday && now.isAfter(MARKET_CLOSE) && !snapshotRepo.existsByTradeDate(today)) {
+            log.info("Missed-snapshot check: today's snapshot missing, saving for {}", today);
+            saveSnapshotForDate(today);
+        }
+
+        LocalDate lastTradingDay = getLastTradingDay(today);
+        if (!snapshotRepo.existsByTradeDate(lastTradingDay)) {
+            log.info("Missed-snapshot check: last trading day snapshot missing, saving for {}", lastTradingDay);
+            saveSnapshotForDate(lastTradingDay);
+        }
+    }
+
+    @Transactional
+    public void saveSnapshotForDate(LocalDate date) {
+        try {
+            WatchlistResponse watchlist = buildWatchlist();
+            String jsonData = objectMapper.writeValueAsString(watchlist);
+            snapshotRepo.deleteByTradeDate(date);
+            snapshotRepo.save(WatchlistSnapshot.builder()
+                    .tradeDate(date)
+                    .watchlistData(jsonData)
+                    .savedAt(LocalDateTime.now())
+                    .build());
+            log.info("Watchlist snapshot saved for {}", date);
+        } catch (Exception e) {
+            log.error("Failed to save watchlist snapshot for {}: {}", date, e.getMessage());
+        }
+    }
+
+    /** Returns the most recent weekday before or equal to the given date (skipping Sat/Sun). */
+    private LocalDate getLastTradingDay(LocalDate date) {
+        LocalDate d = date.minusDays(1);
+        while (d.getDayOfWeek() == DayOfWeek.SATURDAY || d.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            d = d.minusDays(1);
+        }
+        return d;
+    }
+
+    // -------------------------------------------------------------------------
     // Core build logic
     // -------------------------------------------------------------------------
 
     private WatchlistResponse buildWatchlist() {
+        if (!upstoxTokenService.isAuthenticated()) {
+            log.debug("buildWatchlist skipped — Upstox not authenticated yet");
+            return WatchlistResponse.builder()
+                    .topGainers(List.of()).topLosers(List.of())
+                    .volumeShockers(List.of()).activeByValue(List.of())
+                    .highOiStocks(List.of()).onlyBuyers(List.of()).onlySellers(List.of())
+                    .generatedAt(LocalDateTime.now()).marketStatus("CLOSED").totalSymbolsScanned(0)
+                    .build();
+        }
+
         long startMs = System.currentTimeMillis();
 
         List<String> universe = universeService.getUniverse();
@@ -183,14 +291,125 @@ public class WatchlistService {
     /**
      * HIGH OI: Stocks / contracts with highest open interest.
      * Useful for identifying where smart money is positioned.
+     * Fetches OI data from F&O instruments separately since equity instruments don't have OI.
      */
     private List<WatchlistItem> buildHighOi(List<WatchlistItem> items) {
-        return items.stream()
-                .filter(i -> i.getOpenInterest() >= config.getMinOpenInterest())
+        long minOiThreshold = config.getMinOpenInterest();
+        log.info("[HIGH_OI] Building high OI list - threshold: {}, input items: {}", minOiThreshold, items.size());
+
+        // Extract symbols from equity items
+        List<String> symbols = items.stream()
+                .map(WatchlistItem::getSymbol)
+                .distinct()
+                .toList();
+
+        // Fetch OI data from F&O instruments
+        Map<String, Long> oiMap = fetchOiFromFnoInstruments(symbols);
+        log.info("[HIGH_OI] Fetched OI for {}/{} symbols from F&O instruments", oiMap.size(), symbols.size());
+
+        // Enrich equity items with F&O OI data
+        List<WatchlistItem> enrichedItems = items.stream()
+                .peek(item -> {
+                    Long fnoOi = oiMap.get(item.getSymbol());
+                    if (fnoOi != null && fnoOi > 0) {
+                        item.setOpenInterest(fnoOi);
+                    }
+                })
+                .toList();
+
+        // Log top 10 OI values after enrichment
+        List<WatchlistItem> sortedByOi = enrichedItems.stream()
+                .sorted(Comparator.comparingLong(WatchlistItem::getOpenInterest).reversed())
+                .toList();
+
+        if (!sortedByOi.isEmpty()) {
+            log.info("[HIGH_OI] Top 10 OI values after F&O enrichment:");
+            for (int i = 0; i < Math.min(10, sortedByOi.size()); i++) {
+                WatchlistItem item = sortedByOi.get(i);
+                log.info("[HIGH_OI]   #{}: {} - OI: {}, LTP: {}, TradedValue: {}",
+                        i + 1, item.getSymbol(), item.getOpenInterest(), item.getLtp(), item.getTradedValue());
+            }
+        }
+
+        // Count how many items have OI data
+        long itemsWithOi = enrichedItems.stream().filter(i -> i.getOpenInterest() > 0).count();
+        log.info("[HIGH_OI] Items with OI > 0 after F&O enrichment: {}/{}", itemsWithOi, enrichedItems.size());
+
+        // Apply filter
+        List<WatchlistItem> filtered = enrichedItems.stream()
+                .filter(i -> i.getOpenInterest() >= minOiThreshold)
                 .sorted(Comparator.comparingLong(WatchlistItem::getOpenInterest).reversed())
                 .limit(config.getHighOiLimit())
                 .peek(i -> i.setCategory(WatchlistCategory.HIGH_OI))
                 .collect(Collectors.toList());
+
+        log.info("[HIGH_OI] After filtering - items with OI >= {}: {}", minOiThreshold, filtered.size());
+
+        if (filtered.isEmpty()) {
+            log.warn("[HIGH_OI] NO ITEMS PASSED THE OI FILTER! This might indicate:");
+            log.warn("[HIGH_OI]   1. F&O OI data not available for these symbols");
+            log.warn("[HIGH_OI]   2. Threshold ({}) is too high for current market conditions", minOiThreshold);
+            log.warn("[HIGH_OI]   3. All items filtered out by earlier filters (F&O eligibility, liquidity)");
+        }
+
+        return filtered;
+    }
+
+    /**
+     * Fetches open interest data from F&O instruments for the given symbols.
+     * Returns a map of symbol -> OI value.
+     */
+    private Map<String, Long> fetchOiFromFnoInstruments(List<String> symbols) {
+        Map<String, Long> oiMap = new HashMap<>();
+        try {
+            // Resolve symbols to F&O instrument keys using the new F&O-specific method
+            Map<String, String> fnoKeyMap = instrumentMasterService
+                    .resolveToInstrumentKeyMapForFno(symbols);
+
+            if (fnoKeyMap.isEmpty()) {
+                log.warn("[HIGH_OI] No F&O instrument keys resolved for {} symbols", symbols.size());
+                return oiMap;
+            }
+
+            log.info("[HIGH_OI] Resolved {}/{} symbols to F&O instrument keys", fnoKeyMap.size(), symbols.size());
+
+            // Fetch quotes for F&O instruments to get OI data
+            List<String> fnoKeys = new ArrayList<>(fnoKeyMap.values());
+            List<WatchlistItem> fnoQuotes = marketDataService.fetchLiveQuotes(fnoKeys);
+
+            log.info("[HIGH_OI] Fetched {} F&O quotes with OI data", fnoQuotes.size());
+
+            // Log first 5 F&O quotes to debug OI values
+            for (int i = 0; i < Math.min(5, fnoQuotes.size()); i++) {
+                WatchlistItem item = fnoQuotes.get(i);
+                log.info("[HIGH_OI] F&O Quote #{}: symbol={}, token={}, OI={}", i+1, item.getSymbol(), item.getInstrumentToken(), item.getOpenInterest());
+            }
+
+            // Map OI back to original symbols
+            for (WatchlistItem fnoItem : fnoQuotes) {
+                String instrumentToken = fnoItem.getInstrumentToken();
+                long oi = fnoItem.getOpenInterest();
+
+                // Find the symbol that maps to this instrument token
+                for (Map.Entry<String, String> entry : fnoKeyMap.entrySet()) {
+                    if (entry.getValue().equals(instrumentToken)) {
+                        if (oi > 0) {
+                            oiMap.put(entry.getKey(), oi);
+                        } else {
+                            log.debug("[HIGH_OI] Skipping {} - OI is 0 for token {}", entry.getKey(), instrumentToken);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            log.info("[HIGH_OI] Successfully mapped OI for {} symbols", oiMap.size());
+
+        } catch (Exception e) {
+            log.error("[HIGH_OI] Error fetching OI from F&O instruments: {}", e.getMessage(), e);
+        }
+
+        return oiMap;
     }
 
     /**

@@ -118,6 +118,7 @@ public class UpstoxPortfolioService {
                             .averagePrice(item.path("average_price").asDouble())
                             .companyName(item.path("company_name").asText())
                             .isin(item.path("isin").asText())
+                            .broker("UPSTOX")
                             .build();
 
                     holdings.add(holding);

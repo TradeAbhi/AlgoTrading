@@ -106,6 +106,16 @@ public class BacktestTrade {
     @Column(name = "exit_candle_time")
     private LocalDateTime exitCandleTime;
 
+    // ── Previous day OHLC ───────────────────────────────────────────────────
+    @Column(name = "prev_day_high", columnDefinition = "DECIMAL(10,2)")
+    private Double prevDayHigh;
+
+    @Column(name = "prev_day_low", columnDefinition = "DECIMAL(10,2)")
+    private Double prevDayLow;
+
+    @Column(name = "prev_day_close", columnDefinition = "DECIMAL(10,2)")
+    private Double prevDayClose;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

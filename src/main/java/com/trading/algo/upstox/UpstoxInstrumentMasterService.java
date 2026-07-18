@@ -48,6 +48,14 @@ public class UpstoxInstrumentMasterService {
      */
     private final Map<String, String> symbolToKeyMap = new ConcurrentHashMap<>();
 
+    /**
+     * tradingSymbol (uppercase) -> instrumentKey for F&O instruments
+     * e.g. "RELIANCE" -> "NSE_FO|...futures contract key..."
+     *
+     * Only NSE_FO instruments are indexed here.
+     */
+    private final Map<String, String> fnoSymbolToKeyMap = new ConcurrentHashMap<>();
+
     // -------------------------------------------------------------------------
 
     @PostConstruct
@@ -133,6 +141,33 @@ public class UpstoxInstrumentMasterService {
         return symbolToKeyMap.size();
     }
 
+    /**
+     * Resolves symbols to F&O instrument keys.
+     * Returns a map of symbol -> instrumentKey for symbols that have F&O instruments.
+     *
+     * @param symbols list of trading symbols e.g. ["RELIANCE", "TCS"]
+     * @return map of symbol -> F&O instrument key (only for symbols with F&O instruments)
+     */
+    public java.util.Map<String, String> resolveToInstrumentKeyMapForFno(List<String> symbols) {
+        java.util.Map<String, String> result = new java.util.LinkedHashMap<>();
+        List<String> missed = new ArrayList<>();
+
+        for (String symbol : symbols) {
+            String key = fnoSymbolToKeyMap.get(symbol.toUpperCase());
+            if (key != null && !key.isEmpty()) {
+                result.put(symbol, key);
+            } else {
+                missed.add(symbol);
+            }
+        }
+
+        if (!missed.isEmpty()) {
+            log.debug("F&O instrument master: {} symbols NOT found -> {}", missed.size(), missed);
+        }
+        log.info("Resolved {}/{} symbols to F&O instrument keys", result.size(), symbols.size());
+        return result;
+    }
+
     // -------------------------------------------------------------------------
     // Private
     // -------------------------------------------------------------------------
@@ -164,7 +199,8 @@ public class UpstoxInstrumentMasterService {
             JsonNode instruments = objectMapper.readTree(decompressed);
 
             Map<String, String> newMap = new HashMap<>();
-            int total = 0, indexed = 0;
+            Map<String, String> newFnoMap = new HashMap<>();
+            int total = 0, indexed = 0, fnoIndexed = 0;
 
             for (JsonNode instrument : instruments) {
                 total++;
@@ -173,7 +209,7 @@ public class UpstoxInstrumentMasterService {
                 String tradingSymbol = instrument.path("trading_symbol").asText("").toUpperCase();
                 String instrumentKey = instrument.path("instrument_key").asText("");
 
-                // Index only NSE_EQ equity instruments
+                // Index NSE_EQ equity instruments
                 // instrument_type = "EQ" for normal equity
                 // Skip BE (book entry), IL (institutional lot), etc.
                 if ("NSE_EQ".equals(segment)
@@ -184,13 +220,49 @@ public class UpstoxInstrumentMasterService {
                     newMap.put(tradingSymbol, instrumentKey);
                     indexed++;
                 }
+
+                // Index NSE_FO instruments (futures and options)
+                // For F&O, we'll store the nearest expiry contract
+                if ("NSE_FO".equals(segment)
+                        && !tradingSymbol.isEmpty()
+                        && !instrumentKey.isEmpty()) {
+
+                    // Try to get the underlying symbol from the instrument data
+                    String underlyingSymbol = instrument.path("underlying_symbol").asText("").toUpperCase();
+
+                    // If underlying_symbol is available, use it directly
+                    if (!underlyingSymbol.isEmpty()) {
+                        // Store the first (nearest expiry) contract for each underlying symbol
+                        if (!newFnoMap.containsKey(underlyingSymbol)) {
+                            newFnoMap.put(underlyingSymbol, instrumentKey);
+                            fnoIndexed++;
+                            log.debug("F&O indexed: {} -> {} (from {}, underlying: {})",
+                                    underlyingSymbol, instrumentKey, tradingSymbol, underlyingSymbol);
+                        }
+                    } else {
+                        // Fallback: try to extract base symbol from trading symbol
+                        String baseSymbol = extractBaseSymbolFromFno(tradingSymbol);
+                        if (!baseSymbol.isEmpty()) {
+                            if (!newFnoMap.containsKey(baseSymbol)) {
+                                newFnoMap.put(baseSymbol, instrumentKey);
+                                fnoIndexed++;
+                                log.debug("F&O indexed (fallback): {} -> {} (from {})", baseSymbol, instrumentKey, tradingSymbol);
+                            }
+                        } else {
+                            log.debug("F&O skipped - no underlying symbol and could not extract base from: {}", tradingSymbol);
+                        }
+                    }
+                }
             }
 
             symbolToKeyMap.clear();
             symbolToKeyMap.putAll(newMap);
 
-            log.info("Instrument master loaded: {} total records, {} NSE_EQ EQ indexed",
-                    total, indexed);
+            fnoSymbolToKeyMap.clear();
+            fnoSymbolToKeyMap.putAll(newFnoMap);
+
+            log.info("Instrument master loaded: {} total records, {} NSE_EQ EQ indexed, {} NSE_FO indexed",
+                    total, indexed, fnoIndexed);
 
         } catch (Exception e) {
             if (symbolToKeyMap.isEmpty()) {
@@ -201,5 +273,22 @@ public class UpstoxInstrumentMasterService {
                 log.error("Failed to refresh instrument master (stale map retained): {}", e.getMessage(), e);
             }
         }
+    }
+
+    /**
+     * Extracts base symbol from F&O trading symbol.
+     * Actual format from Upstox: "SYMBOL STRIKE TYPE DD MMM YY"
+     * e.g., "CROMPTON 240 PE 29 SEP 26" -> "CROMPTON"
+     * e.g., "BANKNIFTY 63800 CE 25 AUG 26" -> "BANKNIFTY"
+     * e.g., "NIFTY 27000 CE 29 DEC 26" -> "NIFTY"
+     */
+    private String extractBaseSymbolFromFno(String fnoSymbol) {
+        // The actual format is: SYMBOL STRIKE TYPE DD MMM YY
+        // The base symbol is everything before the first space
+        int spaceIndex = fnoSymbol.indexOf(' ');
+        if (spaceIndex > 0) {
+            return fnoSymbol.substring(0, spaceIndex);
+        }
+        return fnoSymbol;
     }
 }

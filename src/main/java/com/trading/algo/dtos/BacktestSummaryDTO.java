@@ -40,6 +40,13 @@ public class BacktestSummaryDTO {
     private int  totalSymbolsScanned;
     private int  totalSymbolsWithSignal;
 
+    /**
+     * Filters whose input data was unavailable (null, zero, or the configured
+     * unavailable sentinel) for every usable sample in this backtest run.
+     * Populated by POST /api/backtest/run.
+     */
+    private List<FilterDiagnostic> unavailableFilters;
+
     /** Top 10 symbols by total P&L */
     private List<SymbolStat> topSymbols;
 
@@ -56,5 +63,16 @@ public class BacktestSummaryDTO {
         private int    wins;
         private double winRate;
         private double totalPnlPoints;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FilterDiagnostic {
+        private String filter;
+        private int samples;
+        private int unavailableSamples;
+        private String reason;
     }
 }

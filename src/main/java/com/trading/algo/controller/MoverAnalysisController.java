@@ -35,4 +35,15 @@ public class MoverAnalysisController {
                 "date", targetDate.toString()
         ));
     }
+
+    @PostMapping("/backfill")
+    public ResponseEntity<Map<String, String>> backfill(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "false") boolean force) {
+
+        log.info("POST /api/mover-analysis/backfill - from={} to={} force={}", from, to, force);
+        String summary = moverAnalysisService.backfill(from, to, force);
+        return ResponseEntity.ok(Map.of("result", summary));
+    }
 }

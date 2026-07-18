@@ -1,10 +1,6 @@
 package com.stockanalyzer.service;
 
-import com.stockanalyzer.model.Candle;
-import com.stockanalyzer.model.CandleWindow;
-import com.stockanalyzer.model.MarketStructureResult;
-import com.stockanalyzer.model.StructureShift;
-import com.stockanalyzer.model.SwingPoint;
+import com.stockanalyzer.model.*;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;

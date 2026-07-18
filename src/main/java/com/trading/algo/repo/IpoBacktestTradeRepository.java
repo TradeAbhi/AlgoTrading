@@ -4,7 +4,6 @@ import com.trading.algo.entity.IpoBacktestTrade;
 import com.trading.algo.entity.IpoBacktestTrade.Outcome;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;

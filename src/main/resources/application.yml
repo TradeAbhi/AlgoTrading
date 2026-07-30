@@ -43,6 +43,12 @@ watchlist:
 spring:
   application:
     name: AlgoTrading
+  devtools:
+    restart:
+      # Disable the restart classloader provided by Spring Boot DevTools.
+      # This avoids classloading issues where the RestartClassLoader can't
+      # find newly compiled application classes (NoClassDefFoundError).
+      enabled: false
 
   cache:
     type: caffeine
@@ -183,6 +189,13 @@ delta:
     testnet: false
     testnet-url: https://testnet-api.delta.exchange
   symbols: BTCUSD,ETHUSD,SOLUSD,PAXGUSD
+  crypto-consolidation:
+    consolidation-days: 8
+    max-range-pct: 5.0
+    target-rr: 3
+    scheduler:
+      15m-check: "0 0/15 8-17 * * * *"
+      daily-check: "0 0 0 * * *"
 
 alert:
   scheduler:
@@ -236,3 +249,5 @@ management:
     health:
       show-details: always
 
+
+  # Crypto Consolidation Breakout Configuration

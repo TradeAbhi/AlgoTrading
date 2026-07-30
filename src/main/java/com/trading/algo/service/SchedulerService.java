@@ -38,6 +38,8 @@ public class SchedulerService {
     private final com.trading.algo.upstox.PortfolioVolumeScanService portfolioVolumeScanService;
     private final IpoGmpAlertService           ipoGmpAlertService;
     private final com.trading.algo.broker.CapAllocationAlertService capAllocationAlertService;
+    private final com.trading.algo.orb.WatchlistOrbService watchlistOrbService;
+    private final com.trading.algo.fibostrategy.WatchlistFiboService watchlistFiboService;
 
     // =========================================================================
     // EARNINGS — fetch & save (DO NOT TOUCH)
@@ -467,5 +469,44 @@ public class SchedulerService {
     private boolean isTradeableEvent(Earnings e) {
         return e.getEventType() != null &&
                 e.getEventType().toLowerCase().contains("financial results");
+    }
+
+    // =========================================================================
+    // WATCHLIST STRATEGIES — ORB & Fibonacci on 15-minute watchlist alerts
+    // =========================================================================
+
+    /**
+     * Watchlist ORB strategy - runs every 15 minutes from 9:46 AM to 3:16 PM
+     * Processes the latest unprocessed watchlist alert and applies ORB strategy
+     */
+    @Scheduled(cron = "0 1,16,31,46 9-15 * * MON-FRI", zone = "Asia/Kolkata")
+    public void watchlistOrbStrategy() {
+        java.time.LocalTime now = java.time.LocalTime.now();
+        // Only run between 9:46 and 15:16
+        if (now.isBefore(java.time.LocalTime.of(9, 46)) || 
+            now.isAfter(java.time.LocalTime.of(15, 16))) {
+            return;
+        }
+        log.info("Watchlist ORB strategy scheduler fired at {}", now);
+        watchlistOrbService.processWatchlistOrb();
+    }
+
+    /**
+     * Watchlist Fibonacci strategy - runs once per day at 9:46 AM
+     * Processes the latest unprocessed watchlist alert and applies Fibonacci strategy
+     */
+    @Scheduled(cron = "0 46 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void watchlistFiboStrategy() {
+        log.info("Watchlist Fibonacci strategy scheduler fired at 9:46 AM");
+        watchlistFiboService.processWatchlistFibo();
+    }
+
+    /**
+     * Clear watchlist ORB state at end of day (3:30 PM)
+     */
+    @Scheduled(cron = "0 30 15 * * MON-FRI", zone = "Asia/Kolkata")
+    public void clearWatchlistOrbState() {
+        log.info("Clearing watchlist ORB state at 3:30 PM");
+        watchlistOrbService.clearState();
     }
 }

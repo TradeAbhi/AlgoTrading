@@ -1,5 +1,12 @@
 package com.trading.algo.service;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trading.algo.ipo.Ipo;
@@ -7,14 +14,9 @@ import com.trading.algo.ipo.IpoRepository;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
 import com.trading.algo.upstox.UpstoxMarketDataService;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.List;
 
 /**
  * Monitors IPO listing performance on listing day using Upstox live quotes.
@@ -81,18 +83,18 @@ public class IpoMonitorService {
                 ipoRepo.save(ipo);
 
                 // Send Telegram alert
-                String emoji = gainPct >= 20 ? "🚀" : gainPct >= 10 ? "📈" :
-                               gainPct >= 0  ? "🟢" : gainPct >= -5 ? "🟡" : "🔴";
+                String emoji = gainPct >= 20 ? "" : gainPct >= 10 ? "" :
+                               gainPct >= 0  ? "" : gainPct >= -5 ? "" : "";
 
                 StringBuilder sb = new StringBuilder();
                 sb.append(emoji).append(" *IPO Listing Today*\n");
                 sb.append("━━━━━━━━━━━━━━━━━━━━\n");
-                sb.append("🏢 ").append(ipo.getName()).append("\n");
-                sb.append("📌 Symbol   : `").append(ipo.getSymbol()).append("`\n");
-                sb.append("💰 Issue Price : ₹").append(fmt(issuePrice)).append("\n");
-                sb.append("🔔 Listing Open: ₹").append(fmt(dayOpen)).append("\n");
-                sb.append("📊 LTP         : ₹").append(fmt(ltp)).append("\n");
-                sb.append("📈 Gain        : *").append(fmt(gainPct)).append("%*\n");
+                sb.append(" ").append(ipo.getName()).append("\n");
+                sb.append(" Symbol   : `").append(ipo.getSymbol()).append("`\n");
+                sb.append(" Issue Price : ₹").append(fmt(issuePrice)).append("\n");
+                sb.append(" Listing Open: ₹").append(fmt(dayOpen)).append("\n");
+                sb.append(" LTP         : ₹").append(fmt(ltp)).append("\n");
+                sb.append(" Gain        : *").append(fmt(gainPct)).append("%*\n");
                 sb.append("━━━━━━━━━━━━━━━━━━━━\n");
                 sb.append("_EOD performance update at 3:35 PM_");
 
@@ -148,23 +150,23 @@ public class IpoMonitorService {
                 ipo.setListingMonitoredAt(LocalDateTime.now());
                 ipoRepo.save(ipo);
 
-                String emoji = gainPct >= 20 ? "🚀" : gainPct >= 10 ? "📈" :
-                               gainPct >= 0  ? "🟢" : gainPct >= -5 ? "🟡" : "🔴";
+                String emoji = gainPct >= 20 ? "" : gainPct >= 10 ? "" :
+                               gainPct >= 0  ? "" : gainPct >= -5 ? "" : "";
 
                 StringBuilder sb = new StringBuilder();
                 sb.append(emoji).append(" *IPO Listing Day Performance*\n");
                 sb.append("━━━━━━━━━━━━━━━━━━━━\n");
-                sb.append("🏢 ").append(ipo.getName()).append("\n");
-                sb.append("📌 Symbol   : `").append(ipo.getSymbol()).append("`\n");
+                sb.append(" ").append(ipo.getName()).append("\n");
+                sb.append(" Symbol   : `").append(ipo.getSymbol()).append("`\n");
                 sb.append("━━━━━━━━━━━━━━━━━━━━\n");
-                sb.append("💰 Issue Price : ₹").append(fmt(issuePrice)).append("\n");
-                sb.append("🔔 Open        : ₹").append(fmt(open)).append("\n");
+                sb.append(" Issue Price : ₹").append(fmt(issuePrice)).append("\n");
+                sb.append(" Open        : ₹").append(fmt(open)).append("\n");
                 sb.append("⬆️ High         : ₹").append(fmt(high)).append("\n");
                 sb.append("⬇️ Low          : ₹").append(fmt(low)).append("\n");
-                sb.append("🔚 Close       : ₹").append(fmt(close)).append("\n");
+                sb.append(" Close       : ₹").append(fmt(close)).append("\n");
                 sb.append("━━━━━━━━━━━━━━━━━━━━\n");
-                sb.append("📊 vs Issue    : *").append(fmt(gainPct)).append("%*\n");
-                sb.append("📉 Open→Close  : ").append(fmt(fromOpenPct)).append("%\n");
+                sb.append(" vs Issue    : *").append(fmt(gainPct)).append("%*\n");
+                sb.append(" Open→Close  : ").append(fmt(fromOpenPct)).append("%\n");
 
                 telegramService.sendMessageToInvestmentPicks(sb.toString());
                 log.info("Listing EOD alert sent for {} — close=₹{} gain={}%",
@@ -187,21 +189,21 @@ public class IpoMonitorService {
         List<Ipo> upcoming = ipoRepo.findByListingDateBetweenOrderByListingDateAsc(today, nextTwo);
 
         if (upcoming.isEmpty()) {
-            telegramService.sendMessageToInvestmentPicks("📋 No IPO listings in the next 14 days.");
+            telegramService.sendMessageToInvestmentPicks(" No IPO listings in the next 14 days.");
             return;
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append("📋 *Upcoming IPO Listings*\n");
+        sb.append(" *Upcoming IPO Listings*\n");
         sb.append("━━━━━━━━━━━━━━━━━━━━\n");
 
         for (Ipo ipo : upcoming) {
             long days = java.time.temporal.ChronoUnit.DAYS.between(today, ipo.getListingDate());
             String when = days == 0 ? "Today" : days == 1 ? "Tomorrow" : "in " + days + " days";
-            sb.append("🏢 *").append(ipo.getName()).append("*\n");
-            sb.append("   📅 ").append(ipo.getListingDate()).append(" (").append(when).append(")\n");
+            sb.append(" *").append(ipo.getName()).append("*\n");
+            sb.append("    ").append(ipo.getListingDate()).append(" (").append(when).append(")\n");
             if (ipo.getIssuePrice() != null) {
-                sb.append("   💰 Issue: ₹").append(fmt(ipo.getIssuePrice())).append("\n");
+                sb.append("    Issue: ₹").append(fmt(ipo.getIssuePrice())).append("\n");
             }
             sb.append("\n");
          }
@@ -248,8 +250,8 @@ public class IpoMonitorService {
      private void sendUnresolvedAlert(Ipo ipo, String type) {
          telegramService.sendMessageToInvestmentPicks(
              "⚠️ *IPO " + type + " Alert*\n" +
-             "🏢 " + ipo.getName() + "\n" +
-             "📅 Listing: " + ipo.getListingDate() + "\n" +
+             " " + ipo.getName() + "\n" +
+             " Listing: " + ipo.getListingDate() + "\n" +
              "_Could not resolve NSE symbol — check manually_"
          );
      }

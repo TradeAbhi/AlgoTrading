@@ -33,15 +33,15 @@ public class WatchlistController {
     }
 
     /**
-     * POST /api/watchlist/alert
+     * POST /api/watchlist/telegram-alert
      * Manually triggers a Telegram alert with all 7 categories right now.
      * No request body needed — just hit the endpoint.
      *
-     * curl -X POST http://localhost:8080/api/watchlist/alert
+     * curl -X POST http://localhost:8080/api/watchlist/telegram-alert
      */
-    @PostMapping("/alert")
+    @PostMapping("/telegram-alert")
     public ResponseEntity<Map<String, String>> triggerAlert() {
-        log.info("POST /api/watchlist/alert — manual Telegram alert triggered");
+        log.info("POST /api/watchlist/telegram-alert — manual Telegram alert triggered");
         telegramAlertService.sendWatchlistDigest();
         return ResponseEntity.ok(Map.of("status", "Alert sent to Telegram"));
     }

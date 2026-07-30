@@ -6,6 +6,8 @@ import com.trading.algo.entity.BacktestTrade;
 import com.trading.algo.entity.BacktestTrade.Direction;
 import com.trading.algo.entity.IndexBacktestTrade.IndexName;
 import com.trading.algo.service.UniverseService;
+import com.trading.algo.service.MarketSentimentService;
+import com.trading.algo.service.MomentumStockSnapshotService;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
@@ -51,6 +53,8 @@ public class LiveStrategyAlertService {
     private final OpeningCandleStrategyService  strategy;
     private final TelegramService               telegramService;
     private final BacktestConfig                config;
+    private final MomentumStockSnapshotService  momentumStockSnapshotService;
+    private final MarketSentimentService        marketSentimentService;
 
     // =========================================================================
     // Main entry point — called by scheduler at 9:46 and by manual endpoint
@@ -61,10 +65,18 @@ public class LiveStrategyAlertService {
         log.info("LiveStrategyAlert START — date={}", today);
 
         // Resolve all F&O symbols to instrument keys
+        List<String> momentumSymbols = momentumStockSnapshotService.getLatestMomentumSymbols().stream()
+                .filter(UniverseService.NIFTY_FNO_SYMBOLS::contains)
+                .distinct()
+                .collect(Collectors.toList());
+        if (momentumSymbols.isEmpty()) {
+            log.warn("No momentum-stock snapshot is available; skipping Fibonacci scan");
+            return 0;
+        }
         Map<String, String> symbolKeyMap = instrumentMaster
-                .resolveToInstrumentKeyMap(UniverseService.NIFTY_FNO_SYMBOLS);
+                .resolveToInstrumentKeyMap(momentumSymbols);
 
-        log.info("Scanning {} F&O symbols for live strategy setups", symbolKeyMap.size());
+        log.info("Scanning {} momentum snapshot symbols for Fibonacci setups", symbolKeyMap.size());
 
         // Thread-safe list to collect all valid setups found
         CopyOnWriteArrayList<BacktestTrade> signals = new CopyOnWriteArrayList<>();
@@ -89,12 +101,30 @@ public class LiveStrategyAlertService {
         log.info("Stock scan COMPLETE — {} setups found", signals.size());
 
         // Scan indexes sequentially (only 3 — no need for thread pool)
-        List<BacktestTrade> indexSignals = scanIndexes(today);
+        // Breadth is the final filter, after the Fibonacci filter has created
+        // candidates from the momentum snapshot.
+        int fibonacciCandidateCount = signals.size();
+        double adRatio = fetchAdRatio();
+        List<BacktestTrade> adFilteredSignals = signals.stream()
+                .filter(signal -> momentumStockSnapshotService.isTradeDirectionAllowed(
+                        adRatio, signal.getDirection().name()))
+                .collect(Collectors.toList());
+        signals.clear();
+        signals.addAll(adFilteredSignals);
+        log.info("Fibonacci candidates={} A/D-approved={} ratio={}",
+                fibonacciCandidateCount, signals.size(), adRatio);
+
+        // Indexes are intentionally excluded: the configured universe is the
+        // 15-minute momentum snapshot only.
+        List<BacktestTrade> indexSignals = List.of();
 
         log.info("LiveStrategyAlert COMPLETE — stocks={} indexes={}", 
                 signals.size(), indexSignals.size());
 
         if (signals.isEmpty() && indexSignals.isEmpty()) {
+            // Telegram is reserved for symbols that passed all three filters.
+            return 0;
+            /*
             telegramService.sendMessage(
                 "📊 *Opening Candle Strategy — 9:46 AM Scan*\n" +
                 "━━━━━━━━━━━━━━━━━━━━\n" +
@@ -102,6 +132,7 @@ public class LiveStrategyAlertService {
                 "Date: " + today
             );
             return 0;
+            */
         }
 
         sendTelegramAlert(signals, indexSignals, today);
@@ -257,6 +288,18 @@ public class LiveStrategyAlertService {
         telegramService.sendMessage(sb.toString());
         log.info("Live strategy alert sent — stocks={} indexes={}", 
                 signals.size(), indexSignals.size());
+    }
+
+    private double fetchAdRatio() {
+        try {
+            Map<String, Object> breadth = marketSentimentService.fetchAdvanceDeclineData();
+            int advances = (int) breadth.getOrDefault("advances", 0);
+            int declines = (int) breadth.getOrDefault("declines", 0);
+            return declines > 0 ? (double) advances / declines : (advances > 0 ? advances : -1.0);
+        } catch (Exception e) {
+            log.warn("Fibonacci A/D ratio unavailable: {}", e.getMessage());
+            return -1.0;
+        }
     }
 
     private String formatSignal(BacktestTrade t) {

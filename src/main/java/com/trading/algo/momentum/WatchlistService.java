@@ -2,6 +2,7 @@ package com.trading.algo.momentum;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trading.algo.config.WatchlistConfig;
+import com.trading.algo.dtos.CombinedCategoryItem;
 import com.trading.algo.dtos.WatchlistCategory;
 import com.trading.algo.dtos.WatchlistItem;
 import com.trading.algo.dtos.WatchlistResponse;
@@ -229,8 +230,26 @@ public class WatchlistService {
         List<WatchlistItem> onlyBuyers     = buildOnlyBuyers(liquid);
         List<WatchlistItem> onlySellers    = buildOnlySellers(liquid);
 
+        // 5. Detect stocks in multiple categories and create combined category
+        List<CombinedCategoryItem> combinedCategory = buildCombinedCategory(
+                highOi, topGainers, topLosers, activeByValue, volumeShockers, onlyBuyers, onlySellers);
+
+        // 6. Remove stocks in combined category from individual categories
+        Set<String> combinedSymbols = combinedCategory.stream()
+                .map(CombinedCategoryItem::getSymbol)
+                .collect(Collectors.toSet());
+
+        highOi         = removeCombinedStocks(highOi, combinedSymbols);
+        topGainers     = removeCombinedStocks(topGainers, combinedSymbols);
+        topLosers      = removeCombinedStocks(topLosers, combinedSymbols);
+        activeByValue  = removeCombinedStocks(activeByValue, combinedSymbols);
+        volumeShockers = removeCombinedStocks(volumeShockers, combinedSymbols);
+        onlyBuyers     = removeCombinedStocks(onlyBuyers, combinedSymbols);
+        onlySellers    = removeCombinedStocks(onlySellers, combinedSymbols);
+
         long elapsed = System.currentTimeMillis() - startMs;
-        log.info("Watchlist built in {}ms | scanned={} liquid={}", elapsed, allItems.size(), liquid.size());
+        log.info("Watchlist built in {}ms | scanned={} liquid={} combined={}", 
+                elapsed, allItems.size(), liquid.size(), combinedCategory.size());
 
         return WatchlistResponse.builder()
                 .highOiStocks(highOi)
@@ -240,6 +259,7 @@ public class WatchlistService {
                 .volumeShockers(volumeShockers)
                 .onlyBuyers(onlyBuyers)
                 .onlySellers(onlySellers)
+                .combinedCategory(combinedCategory)
                 .generatedAt(LocalDateTime.now())
                 .marketStatus(getMarketStatus())
                 .totalSymbolsScanned(allItems.size())
@@ -496,6 +516,98 @@ public class WatchlistService {
                 .sorted(Comparator.comparingLong(WatchlistItem::getTotalSellQty).reversed())
                 .limit(config.getOnlySellersLimit())
                 .peek(i -> i.setCategory(WatchlistCategory.ONLY_SELLERS))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * COMBINED CATEGORY: Stocks appearing in at least two categories.
+     * These stocks show strong signals across multiple metrics and are highlighted separately.
+     */
+    private List<CombinedCategoryItem> buildCombinedCategory(
+            List<WatchlistItem> highOi,
+            List<WatchlistItem> topGainers,
+            List<WatchlistItem> topLosers,
+            List<WatchlistItem> activeByValue,
+            List<WatchlistItem> volumeShockers,
+            List<WatchlistItem> onlyBuyers,
+            List<WatchlistItem> onlySellers) {
+
+        // Map symbol -> list of categories it belongs to
+        Map<String, List<WatchlistCategory>> symbolCategories = new HashMap<>();
+
+        addCategories(symbolCategories, highOi, WatchlistCategory.HIGH_OI);
+        addCategories(symbolCategories, topGainers, WatchlistCategory.TOP_GAINER);
+        addCategories(symbolCategories, topLosers, WatchlistCategory.TOP_LOSER);
+        addCategories(symbolCategories, activeByValue, WatchlistCategory.ACTIVE_BY_VALUE);
+        addCategories(symbolCategories, volumeShockers, WatchlistCategory.VOLUME_SHOCKER);
+        addCategories(symbolCategories, onlyBuyers, WatchlistCategory.ONLY_BUYERS);
+        addCategories(symbolCategories, onlySellers, WatchlistCategory.ONLY_SELLERS);
+
+        // Filter to stocks in at least 2 categories
+        Map<String, List<WatchlistCategory>> multiCategorySymbols = symbolCategories.entrySet().stream()
+                .filter(entry -> entry.getValue().size() >= 2)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        if (multiCategorySymbols.isEmpty()) {
+            return List.of();
+        }
+
+        // Build CombinedCategoryItem for each multi-category stock
+        // Use the first occurrence of the stock from any category list
+        List<WatchlistItem> allItems = new ArrayList<>();
+        allItems.addAll(highOi);
+        allItems.addAll(topGainers);
+        allItems.addAll(topLosers);
+        allItems.addAll(activeByValue);
+        allItems.addAll(volumeShockers);
+        allItems.addAll(onlyBuyers);
+        allItems.addAll(onlySellers);
+
+        // Create a map for quick lookup by symbol
+        Map<String, WatchlistItem> itemMap = allItems.stream()
+                .collect(Collectors.toMap(WatchlistItem::getSymbol, item -> item, (existing, replacement) -> existing));
+
+        return multiCategorySymbols.entrySet().stream()
+                .map(entry -> {
+                    WatchlistItem item = itemMap.get(entry.getKey());
+                    if (item == null) return null;
+                    return CombinedCategoryItem.builder()
+                            .symbol(item.getSymbol())
+                            .exchange(item.getExchange())
+                            .instrumentToken(item.getInstrumentToken())
+                            .ltp(item.getLtp())
+                            .changePercent(item.getChangePercent())
+                            .volume(item.getVolume())
+                            .volumeRatio(item.getVolumeRatio())
+                            .tradedValue(item.getTradedValue())
+                            .openInterest(item.getOpenInterest())
+                            .totalBuyQty(item.getTotalBuyQty())
+                            .totalSellQty(item.getTotalSellQty())
+                            .buySelRatio(item.getBuySelRatio())
+                            .categories(entry.getValue())
+                            .build();
+                })
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingInt(item -> -item.getCategories().size())) // Sort by number of categories descending
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Helper method to add categories to the symbol->categories map.
+     */
+    private void addCategories(Map<String, List<WatchlistCategory>> symbolCategories,
+                               List<WatchlistItem> items, WatchlistCategory category) {
+        for (WatchlistItem item : items) {
+            symbolCategories.computeIfAbsent(item.getSymbol(), k -> new ArrayList<>()).add(category);
+        }
+    }
+
+    /**
+     * Removes stocks that are in the combined category from individual category lists.
+     */
+    private List<WatchlistItem> removeCombinedStocks(List<WatchlistItem> items, Set<String> combinedSymbols) {
+        return items.stream()
+                .filter(item -> !combinedSymbols.contains(item.getSymbol()))
                 .collect(Collectors.toList());
     }
 

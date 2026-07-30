@@ -44,6 +44,7 @@ public class DeltaApiService {
 
     private static final String CANDLE_PATH   = "/v2/history/candles";
     private static final int    CANDLE_15M_SEC = 900;   // 15 * 60
+    private static final int    CANDLE_1D_SEC  = 86400; // 24 * 60 * 60
 
     private final OkHttpClient   okHttpClient;
     private final DeltaAppConfig appConfig;
@@ -109,6 +110,23 @@ public class DeltaApiService {
         return candles.isEmpty() ? null : candles.get(candles.size() - 1);
     }
 
+    /**
+     * Returns all daily candles for the given symbol within [startEpoch, endEpoch].
+     *
+     * @param symbol      Delta product symbol, e.g. "BTCUSD"
+     * @param startEpoch  Unix epoch seconds (inclusive)
+     * @param endEpoch    Unix epoch seconds (inclusive)
+     */
+    public List<Candle> getDailyCandles(String symbol, long startEpoch, long endEpoch) {
+        String url = buildCandleUrl(symbol, "1d", startEpoch, endEpoch);
+        log.debug("Fetching daily candles for {} | url={}", symbol, url);
+
+        String json = executeGet(url);
+        if (json == null) return List.of();
+
+        return parseCandles(symbol, json, CANDLE_1D_SEC);
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
@@ -144,6 +162,10 @@ public class DeltaApiService {
     }
 
     private List<Candle> parseCandles(String symbol, String json) {
+        return parseCandles(symbol, json, CANDLE_15M_SEC);
+    }
+
+    private List<Candle> parseCandles(String symbol, String json, int candleDurationSec) {
         List<Candle> candles = new ArrayList<>();
         long nowEpoch = Instant.now().getEpochSecond();
 
@@ -159,7 +181,7 @@ public class DeltaApiService {
             if (results.isArray()) {
                 for (JsonNode node : results) {
                     long   openEpoch  = node.path("time").asLong();
-                    long   closeEpoch = openEpoch + CANDLE_15M_SEC;
+                    long   closeEpoch = openEpoch + candleDurationSec;
                     boolean isClosed  = closeEpoch <= nowEpoch;
 
                     Candle candle = Candle.builder()

@@ -1,6 +1,7 @@
 package com.trading.algo.delta.service;
 
 import com.trading.algo.delta.model.AlertSignal;
+import com.trading.algo.delta.model.CryptoBreakoutAlert;
 import com.trading.algo.delta.model.DailyBreakoutAlert;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
@@ -53,6 +54,14 @@ public class TelegramServices {
      */
     public void sendDailyBreakoutAlert(DailyBreakoutAlert alert) {
         String message = buildDailyBreakoutMessage(alert);
+        sendMessage(message);
+    }
+
+    /**
+     * Sends a formatted Telegram message for crypto consolidation breakout alerts.
+     */
+    public void sendCryptoBreakoutAlert(CryptoBreakoutAlert alert) {
+        String message = buildCryptoBreakoutMessage(alert);
         sendMessage(message);
     }
 
@@ -139,6 +148,41 @@ public class TelegramServices {
                 alert.getReferenceLevel().toPlainString(),
                 alert.getReferenceDate(),
                 FMT.format(alert.getCandleCloseTime()),
+                alert.getSymbol().replace("-", "")
+        );
+    }
+
+    private String buildCryptoBreakoutMessage(CryptoBreakoutAlert alert) {
+        String emoji = alert.getDirection() == CryptoBreakoutAlert.Direction.BEARISH_BREAKDOWN ? "🔴" : "🟢";
+        String direction = alert.getDirection() == CryptoBreakoutAlert.Direction.BEARISH_BREAKDOWN
+                ? "BEARISH BREAKDOWN — SELL SIGNAL 📉"
+                : "BULLISH BREAKOUT — BUY SIGNAL 📈";
+        String tfLabel = alert.getTimeframe() == CryptoBreakoutAlert.Timeframe.MINUTES_15 ? "15m" : "Daily";
+
+        return String.format("""
+                %s *%s | %s | %s*
+
+                🕯 Candle Closed: `%s`
+                📦 Consolidation Zone:
+                   High: `%s`
+                   Low: `%s`
+                   Range: `%.3f%%`
+                   Duration: `%d days`
+                ⏰ Timeframe: `%s`
+                ⏰ Alert Time: `%s`
+
+                #%s #crypto #consolidation #breakout""",
+                emoji,
+                alert.getSymbol(),
+                direction,
+                tfLabel,
+                alert.getBreakoutPrice().toPlainString(),
+                alert.getZoneHigh().toPlainString(),
+                alert.getZoneLow().toPlainString(),
+                alert.getZoneWidthPct(),
+                alert.getConsolidationDays(),
+                tfLabel,
+                FMT.format(alert.getAlertTime()),
                 alert.getSymbol().replace("-", "")
         );
     }

@@ -1,6 +1,7 @@
 package com.trading.algo.telegram;
 
 
+import com.trading.algo.dtos.CombinedCategoryItem;
 import com.trading.algo.dtos.WatchlistCategory;
 import com.trading.algo.dtos.WatchlistItem;
 import com.trading.algo.dtos.WatchlistResponse;
@@ -89,6 +90,9 @@ public class WatchlistTelegramAlertService {
         msg.append("\uD83D\uDCCA *Live Market Watchlist* | ").append(time).append("\n");
         msg.append("━━━━━━━━━━━━━━━━━━━━━\n\n");
 
+        // Show combined category first (stocks in 2+ categories)
+        appendCombinedCategory(msg, watchlist.getCombinedCategory());
+
         appendGainers (msg, watchlist.getTopGainers(), previous);
         appendLosers  (msg, watchlist.getTopLosers(), previous);
         appendShockers(msg, watchlist.getVolumeShockers(), previous);
@@ -106,6 +110,38 @@ public class WatchlistTelegramAlertService {
     }
 
     // ── Per-category formatters ──────────────────────────────────────────────
+
+    /** ⚡ Combined Category — stocks in 2+ categories with their category list */
+    private void appendCombinedCategory(StringBuilder sb, List<CombinedCategoryItem> items) {
+        if (items == null || items.isEmpty()) {
+            return; // Don't show section if empty
+        }
+
+        sb.append("\u26A1 *Multi-Category Stocks*\n");
+        items.forEach(i -> {
+            String categories = i.getCategories().stream()
+                    .map(cat -> formatCategoryName(cat))
+                    .collect(Collectors.joining(", "));
+            String chg = i.getChangePercent() >= 0
+                    ? String.format("\u25B2 %.2f%%", i.getChangePercent())
+                    : String.format("\u25BC %.2f%%", Math.abs(i.getChangePercent()));
+            sb.append(String.format("`%-12s` %s | [%s]\n",
+                    i.getSymbol(), chg, categories));
+        });
+        sb.append("\n");
+    }
+
+    private String formatCategoryName(WatchlistCategory category) {
+        return switch (category) {
+            case HIGH_OI -> "High OI";
+            case TOP_GAINER -> "Gainer";
+            case TOP_LOSER -> "Loser";
+            case ACTIVE_BY_VALUE -> "Active";
+            case VOLUME_SHOCKER -> "Vol Shocker";
+            case ONLY_BUYERS -> "Buyers";
+            case ONLY_SELLERS -> "Sellers";
+        };
+    }
 
     /** 📈 Top Gainers — symbol + % change (green arrow) */
     private void appendGainers(StringBuilder sb, List<WatchlistItem> items,

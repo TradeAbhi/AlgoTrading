@@ -61,6 +61,27 @@ public class MarketSentimentController {
     public String triggerBreadthAlert() {
         sentimentService.breadthExtremeAlert();
         return "✅ Breadth alert checked";
-    
+    }
+
+    // ✅ Test PCR calculation with debug
+    @GetMapping("/test-pcr")
+    public String testPCR() {
+        try {
+            double pcr = sentimentService.fetchPCR();
+            return "PCR: " + pcr;
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    // ✅ Test OI data with debug
+    @GetMapping("/test-oi")
+    public String testOI() {
+        try {
+            var oi = sentimentService.fetchNiftyOIData();
+            return "OI Data: " + oi.toString();
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
     }
 }

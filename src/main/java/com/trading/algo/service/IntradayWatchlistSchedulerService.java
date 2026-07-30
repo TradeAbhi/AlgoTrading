@@ -24,6 +24,7 @@ public class IntradayWatchlistSchedulerService {
     private final WatchlistService watchlistService;
     private final IntradayWatchlistSnapshotRepository snapshotRepository;
     private final ObjectMapper objectMapper;
+    private final MomentumStockSnapshotService momentumStockSnapshotService;
 
     /**
      * Runs every 15 minutes during market hours to save intraday snapshots.
@@ -58,6 +59,12 @@ public class IntradayWatchlistSchedulerService {
                 .build();
             
             snapshotRepository.save(snapshot);
+            // Persist the exact momentum universe used by intraday strategies.
+            // This is the union of the configured momentum watchlist categories.
+            int capturedStocks = momentumStockSnapshotService.captureMomentumStocks();
+            if (capturedStocks > 0) {
+                momentumStockSnapshotService.sendLatestSnapshotAlert();
+            }
             log.info("Intraday snapshot saved successfully");
             
         } catch (Exception e) {

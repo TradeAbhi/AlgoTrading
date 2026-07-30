@@ -1,6 +1,7 @@
 package com.trading.algo.orb;
 
 import com.trading.algo.config.OrbConfig;
+import com.trading.algo.service.MomentumStockSnapshotService;
 import com.trading.algo.telegram.TelegramService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * ORB Backtest Service
@@ -52,17 +54,21 @@ public class OrbBacktestService {
     // ── Filters (must match OrbScannerServiceFinal) ───────────────────────────
     private static final double MIN_RANGE_PCT         = 0.5;
     private static final double MIN_VOLUME_MULTIPLIER = 1.5;
+    private static final double PREV_DAY_LEVEL_BUFFER_PCT = 1.0;
 
     private final OrbConfig orbConfig;
+    private final MomentumStockSnapshotService momentumStockSnapshotService;
     private final RestTemplate restTemplate;
     private final TelegramService telegramService;
 
     public OrbBacktestService(OrbConfig orbConfig,
                                RestTemplate restTemplate,
-                               TelegramService telegramService) {
+                               TelegramService telegramService,
+                               MomentumStockSnapshotService momentumStockSnapshotService) {
         this.orbConfig       = orbConfig;
         this.restTemplate    = restTemplate;
         this.telegramService = telegramService;
+        this.momentumStockSnapshotService = momentumStockSnapshotService;
     }
 
     // ── Async entry point (called by OrbBacktestController) ─────────────────
@@ -90,7 +96,20 @@ public class OrbBacktestService {
             requestId, fromDate, toDate, stopLossPct);
 
         List<TradeResult> allTrades = new ArrayList<>();
-        Map<String, String> keyToSymbol = orbConfig.getKeyToSymbolMap();
+        // Get momentum stocks to filter universe
+        List<String> momentumSymbols = momentumStockSnapshotService.getLatestMomentumSymbols();
+        Map<String, String> keyToSymbol;
+        
+        if (momentumSymbols != null && !momentumSymbols.isEmpty()) {
+            log.info("[ORB-BT][{}] Using momentum stock filter: {} symbols", requestId, momentumSymbols.size());
+            Map<String, String> allKeys = orbConfig.getKeyToSymbolMap();
+            keyToSymbol = allKeys.entrySet().stream()
+                .filter(e -> momentumSymbols.contains(e.getValue()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        } else {
+            log.info("[ORB-BT][{}] No momentum stocks available, using full universe", requestId);
+            keyToSymbol = orbConfig.getKeyToSymbolMap();
+        }
         List<LocalDate> tradingDays = getTradingDays(fromDate, toDate);
 
         log.info("[ORB-BT][{}] {} symbols × {} trading days",
@@ -141,6 +160,16 @@ public class OrbBacktestService {
             return trades; // opening range too narrow — skip symbol for this day
         }
 
+        // Fetch previous day's high and low for the new filter
+        String instrumentKey = orbConfig.getKeyToSymbolMap().entrySet().stream()
+            .filter(e -> e.getValue().equals(symbol))
+            .map(Map.Entry::getKey)
+            .findFirst()
+            .orElse(null);
+
+        double prevDayHigh = instrumentKey != null ? fetchPrevDayHigh(symbol, instrumentKey, date) : 0;
+        double prevDayLow = instrumentKey != null ? fetchPrevDayLow(symbol, instrumentKey, date) : 0;
+
         double rollingHigh    = firstCandle.high;
         double rollingLow     = firstCandle.low;
         boolean buyTriggered  = false;
@@ -172,17 +201,35 @@ public class OrbBacktestService {
                 if (c.close > rollingHigh) {
                     // ── Filter 2: Volume confirmation ─────────────────────────
                     if (c.volume >= (long)(openingVolume * MIN_VOLUME_MULTIPLIER)) {
-                        buyTriggered = true;
-                        double entryPrice   = c.close;
-                        double invalidation = prevCandleLow;
-                        double stopPrice    = entryPrice * (1 - stopLossPct / 100.0);
-                        double exitPrice    = findExit(candles, i + 1, stopPrice, "BUY");
-                        double pnlPct       = ((exitPrice - entryPrice) / entryPrice) * 100.0;
+                        // ── Filter 3: Previous day high level buffer ────────────
+                        // If price is ABOVE previous day high, alert immediately.
+                        // If price is BELOW previous day high, check if there's room (buffer) to reach it.
+                        boolean passesBufferCheck = false;
+                        if (prevDayHigh <= 0) {
+                            // Previous day data not available, skip buffer check
+                            passesBufferCheck = true;
+                        } else if (c.close > prevDayHigh) {
+                            // Already above prev day high — sufficient room
+                            passesBufferCheck = true;
+                        } else {
+                            // Price below prev day high — check if there's 1% buffer room
+                            double bufferRoom = (prevDayHigh - c.close) / c.close * 100.0;
+                            passesBufferCheck = bufferRoom >= PREV_DAY_LEVEL_BUFFER_PCT;
+                        }
 
-                        trades.add(new TradeResult(symbol, date, "BUY",
-                            entryPrice, exitPrice, pnlPct, rollingHigh, invalidation, c.time.toLocalTime()));
+                        if (passesBufferCheck) {
+                            buyTriggered = true;
+                            double entryPrice   = c.close;
+                            double invalidation = prevCandleLow;
+                            double stopPrice    = entryPrice * (1 - stopLossPct / 100.0);
+                            double exitPrice    = findExit(candles, i + 1, stopPrice, "BUY");
+                            double pnlPct       = ((exitPrice - entryPrice) / entryPrice) * 100.0;
+
+                            trades.add(new TradeResult(symbol, date, "BUY",
+                                entryPrice, exitPrice, pnlPct, rollingHigh, invalidation, c.time.toLocalTime()));
+                        }
                     }
-                    // low volume breakout — skip, but don't advance rollingHigh
+                    // low volume breakout or buffer check failed — skip, but don't advance rollingHigh
 
                 } else if (c.high > rollingHigh) {
                     // Pierced rollingHigh but failed to close above →
@@ -200,17 +247,35 @@ public class OrbBacktestService {
                 if (c.close < rollingLow) {
                     // ── Filter 2: Volume confirmation ─────────────────────────
                     if (c.volume >= (long)(openingVolume * MIN_VOLUME_MULTIPLIER)) {
-                        sellTriggered = true;
-                        double entryPrice   = c.close;
-                        double invalidation = prevCandleHigh;
-                        double stopPrice    = entryPrice * (1 + stopLossPct / 100.0);
-                        double exitPrice    = findExit(candles, i + 1, stopPrice, "SELL");
-                        double pnlPct       = ((entryPrice - exitPrice) / entryPrice) * 100.0;
+                        // ── Filter 3: Previous day low level buffer ────────────
+                        // If price is BELOW previous day low, alert immediately.
+                        // If price is ABOVE previous day low, check if there's room (buffer) to reach it.
+                        boolean passesBufferCheck = false;
+                        if (prevDayLow <= 0) {
+                            // Previous day data not available, skip buffer check
+                            passesBufferCheck = true;
+                        } else if (c.close < prevDayLow) {
+                            // Already below prev day low — sufficient room
+                            passesBufferCheck = true;
+                        } else {
+                            // Price above prev day low — check if there's 1% buffer room
+                            double bufferRoom = (c.close - prevDayLow) / c.close * 100.0;
+                            passesBufferCheck = bufferRoom >= PREV_DAY_LEVEL_BUFFER_PCT;
+                        }
 
-                        trades.add(new TradeResult(symbol, date, "SELL",
-                            entryPrice, exitPrice, pnlPct, rollingLow, invalidation, c.time.toLocalTime()));
+                        if (passesBufferCheck) {
+                            sellTriggered = true;
+                            double entryPrice   = c.close;
+                            double invalidation = prevCandleHigh;
+                            double stopPrice    = entryPrice * (1 + stopLossPct / 100.0);
+                            double exitPrice    = findExit(candles, i + 1, stopPrice, "SELL");
+                            double pnlPct       = ((entryPrice - exitPrice) / entryPrice) * 100.0;
+
+                            trades.add(new TradeResult(symbol, date, "SELL",
+                                entryPrice, exitPrice, pnlPct, rollingLow, invalidation, c.time.toLocalTime()));
+                        }
                     }
-                    // low volume breakdown — skip, but don't advance rollingLow
+                    // low volume breakdown or buffer check failed — skip, but don't advance rollingLow
 
                 } else if (c.low < rollingLow) {
                     // Pierced rollingLow but failed to close below →
@@ -381,6 +446,68 @@ public class OrbBacktestService {
             d = d.plusDays(1);
         }
         return days;
+    }
+
+    // ── Previous day high/low fetch ────────────────────────────────────
+    @SuppressWarnings("unchecked")
+    private double fetchPrevDayHigh(String symbol, String instrumentKey, LocalDate date) {
+        try {
+            String encodedKey = instrumentKey.replace("|", "%7C");
+            LocalDate endDate = date;
+            LocalDate fromDate = date.minusDays(5);
+
+            java.net.URI uri = java.net.URI.create(String.format(
+                "https://api.upstox.com/v3/historical-candle/%s/days/1/%s/%s",
+                encodedKey, endDate, fromDate));
+
+            Map<String, Object> response = restTemplate.getForObject(uri, Map.class);
+            if (response == null || !"success".equals(response.get("status"))) return 0;
+
+            Map<String, Object> data = (Map<String, Object>) response.get("data");
+            if (data == null) return 0;
+
+            List<List<Object>> candles = (List<List<Object>>) data.get("candles");
+            if (candles == null || candles.size() < 2) return 0;
+
+            // candles[0] = today (or requested date), candles[1] = previous completed day
+            List<Object> prevDay = candles.get(1);
+            // [0]=timestamp [1]=open [2]=high [3]=low [4]=close [5]=volume
+            return toDouble(prevDay.get(2));
+
+        } catch (Exception e) {
+            log.warn("[ORB-BT] fetchPrevDayHigh failed for {} on {}: {}", symbol, date, e.getMessage());
+            return 0;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private double fetchPrevDayLow(String symbol, String instrumentKey, LocalDate date) {
+        try {
+            String encodedKey = instrumentKey.replace("|", "%7C");
+            LocalDate endDate = date;
+            LocalDate fromDate = date.minusDays(5);
+
+            java.net.URI uri = java.net.URI.create(String.format(
+                "https://api.upstox.com/v3/historical-candle/%s/days/1/%s/%s",
+                encodedKey, endDate, fromDate));
+
+            Map<String, Object> response = restTemplate.getForObject(uri, Map.class);
+            if (response == null || !"success".equals(response.get("status"))) return 0;
+
+            Map<String, Object> data = (Map<String, Object>) response.get("data");
+            if (data == null) return 0;
+
+            List<List<Object>> candles = (List<List<Object>>) data.get("candles");
+            if (candles == null || candles.size() < 2) return 0;
+
+            List<Object> prevDay = candles.get(1);
+            // [0]=timestamp [1]=open [2]=high [3]=low [4]=close [5]=volume
+            return toDouble(prevDay.get(3));
+
+        } catch (Exception e) {
+            log.warn("[ORB-BT] fetchPrevDayLow failed for {} on {}: {}", symbol, date, e.getMessage());
+            return 0;
+        }
     }
 
     // ── Type helpers ─────────────────────────────────────────────────────────

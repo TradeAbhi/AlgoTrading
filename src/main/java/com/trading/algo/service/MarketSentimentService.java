@@ -505,10 +505,51 @@ public class MarketSentimentService {
 	    
 	 
 	    /**
-	     * PCR via Upstox option chain.
-	     * Endpoint: GET /v2/option/chain?instrument_key=NSE_INDEX|Nifty 50&expiry_date=YYYY-MM-DD
+	     * PCR via NSE option chain API (more reliable).
+	     * Falls back to Upstox option chain if NSE fails.
 	     */
-	    private double fetchPCR() throws Exception {
+	    public double fetchPCR() throws Exception {
+	        try {
+	            // Try NSE option chain API first
+	            String url = "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY";
+	            JsonNode root = getNse(url);
+	            
+	            JsonNode data = root.path("data");
+	            if (!data.has("filtered") || !data.path("filtered").isArray()) {
+	                log.warn("[PCR] No filtered data in NSE response, trying Upstox");
+	                return fetchPCRFromUpstox();
+	            }
+	            
+	            JsonNode filtered = data.path("filtered");
+	            double totalCallOI = 0, totalPutOI = 0;
+	            
+	            for (JsonNode record : filtered) {
+	                JsonNode ce = record.path("CE");
+	                JsonNode pe = record.path("PE");
+	                
+	                long callOI = ce.path("openInterest").asLong(0);
+	                long putOI = pe.path("openInterest").asLong(0);
+	                
+	                totalCallOI += callOI;
+	                totalPutOI += putOI;
+	            }
+	            
+	            log.info("[PCR] NSE - CallOI: {}, PutOI: {}", totalCallOI, totalPutOI);
+	            
+	            if (totalCallOI == 0) {
+	                log.warn("[PCR] CallOI is 0 from NSE, trying Upstox");
+	                return fetchPCRFromUpstox();
+	            }
+	            
+	            return totalPutOI / totalCallOI;
+	            
+	        } catch (Exception e) {
+	            log.error("[PCR] NSE failed: {}, trying Upstox", e.getMessage());
+	            return fetchPCRFromUpstox();
+	        }
+	    }
+	    
+	    private double fetchPCRFromUpstox() throws Exception {
 	        String token = upstoxTokenService.getAccessToken();
 	        if (token.isBlank()) throw new Exception("Upstox token not set. Visit http://localhost:8080/upstox/login");
 	 
@@ -523,17 +564,70 @@ public class MarketSentimentService {
 	        double totalCallOI = 0, totalPutOI = 0;
 	        if (data.isArray()) {
 	            for (JsonNode strike : data) {
-	                totalCallOI += strike.path("call_options").path("market_data").path("oi").asDouble(0);
-	                totalPutOI  += strike.path("put_options") .path("market_data").path("oi").asDouble(0);
+	                double callOI = strike.path("call_options").path("market_data").path("oi").asDouble(0);
+	                double putOI  = strike.path("put_options").path("market_data").path("oi").asDouble(0);
+	                
+	                if (callOI == 0) callOI = strike.path("call_options").path("oi").asDouble(0);
+	                if (putOI == 0)  putOI  = strike.path("put_options").path("oi").asDouble(0);
+	                
+	                totalCallOI += callOI;
+	                totalPutOI  += putOI;
 	            }
 	        }
 	 
-	        System.out.println("[PCR] expiry=" + expiry + " CallOI=" + totalCallOI + " PutOI=" + totalPutOI);
+	        log.info("[PCR] Upstox - CallOI: {}, PutOI: {}", totalCallOI, totalPutOI);
 	        if (totalCallOI == 0) return 0;
 	        return totalPutOI / totalCallOI;
 	    }
 	 
-	    private Map<String, Object> fetchNiftyOIData() throws Exception {
+	    public Map<String, Object> fetchNiftyOIData() throws Exception {
+	        try {
+	            // Try NSE option chain API first
+	            String url = "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY";
+	            JsonNode root = getNse(url);
+	            
+	            JsonNode data = root.path("data");
+	            if (!data.has("filtered") || !data.path("filtered").isArray()) {
+	                log.warn("[OI] No filtered data in NSE response, trying Upstox");
+	                return fetchNiftyOIDataFromUpstox();
+	            }
+	            
+	            JsonNode filtered = data.path("filtered");
+	            long totalCallOI = 0, totalPutOI = 0, maxCallOI = 0, maxPutOI = 0;
+	            int maxCallStrike = 0, maxPutStrike = 0;
+	            
+	            for (JsonNode record : filtered) {
+	                int strike = record.path("strike_price").asInt(0);
+	                JsonNode ce = record.path("CE");
+	                JsonNode pe = record.path("PE");
+	                
+	                long callOI = ce.path("openInterest").asLong(0);
+	                long putOI = pe.path("openInterest").asLong(0);
+	                
+	                totalCallOI += callOI;
+	                totalPutOI += putOI;
+	                
+	                if (callOI > maxCallOI) { maxCallOI = callOI; maxCallStrike = strike; }
+	                if (putOI > maxPutOI) { maxPutOI = putOI; maxPutStrike = strike; }
+	            }
+	            
+	            log.info("[OI] NSE - CallOI: {}, PutOI: {}, MaxCall: {}, MaxPut: {}", 
+	                    totalCallOI, totalPutOI, maxCallStrike, maxPutStrike);
+	            
+	            Map<String, Object> result = new HashMap<>();
+	            result.put("totalCallOI", totalCallOI);
+	            result.put("totalPutOI", totalPutOI);
+	            result.put("maxCallStrike", maxCallStrike);
+	            result.put("maxPutStrike", maxPutStrike);
+	            return result;
+	            
+	        } catch (Exception e) {
+	            log.error("[OI] NSE failed: {}, trying Upstox", e.getMessage());
+	            return fetchNiftyOIDataFromUpstox();
+	        }
+	    }
+	    
+	    private Map<String, Object> fetchNiftyOIDataFromUpstox() throws Exception {
 	        String token = upstoxTokenService.getAccessToken();
 	        if (token.isBlank()) throw new Exception("Upstox token not set. Visit http://localhost:8080/upstox/login");
 	 
@@ -553,12 +647,18 @@ public class MarketSentimentService {
 	                int  sp      = strike.path("strike_price").asInt(0);
 	                long callOI  = strike.path("call_options").path("market_data").path("oi").asLong(0);
 	                long putOI   = strike.path("put_options") .path("market_data").path("oi").asLong(0);
+	                
+	                if (callOI == 0) callOI = strike.path("call_options").path("oi").asLong(0);
+	                if (putOI == 0)  putOI  = strike.path("put_options").path("oi").asLong(0);
+	                
 	                totalCallOI += callOI;
 	                totalPutOI  += putOI;
 	                if (callOI > maxCallOI) { maxCallOI = callOI; maxCallStrike = sp; }
 	                if (putOI  > maxPutOI)  { maxPutOI  = putOI;  maxPutStrike  = sp; }
 	            }
 	        }
+	 
+	        log.info("[OI] Upstox - CallOI: {}, PutOI: {}", totalCallOI, totalPutOI);
 	 
 	        Map<String, Object> result = new HashMap<>();
 	        result.put("totalCallOI",   totalCallOI);

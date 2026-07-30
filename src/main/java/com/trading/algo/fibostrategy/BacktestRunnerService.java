@@ -6,6 +6,8 @@ import com.trading.algo.dtos.Candle;
 import com.trading.algo.entity.BacktestTrade;
 import com.trading.algo.entity.BacktestTrade.Outcome;
 import com.trading.algo.repo.BacktestTradeRepository;
+
+import com.trading.algo.service.MomentumStockSnapshotService;
 import com.trading.algo.service.MarketSentimentService;
 import com.trading.algo.service.UniverseService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
@@ -46,7 +48,9 @@ public class BacktestRunnerService {
     private final OpeningCandleStrategyService   strategy;
     private final BacktestTradeRepository        tradeRepo;
     private final BacktestConfig                 config;
-    private final MarketSentimentService         marketSentimentService;
+
+    private final MomentumStockSnapshotService   momentumStockSnapshotService;
+    private final MarketSentimentService          marketSentimentService;
 
     // =========================================================================
     // Main run
@@ -65,7 +69,19 @@ public class BacktestRunnerService {
             log.info("Cleared {} existing trades in date range", old.size());
         }
 
-        List<String> fnoSymbols = UniverseService.NIFTY_FNO_SYMBOLS;
+        // Get momentum stocks to filter universe
+        List<String> momentumSymbols = momentumStockSnapshotService.getLatestMomentumSymbols();
+        List<String> fnoSymbols;
+        
+        if (momentumSymbols != null && !momentumSymbols.isEmpty()) {
+            log.info("Using momentum stock filter: {} symbols", momentumSymbols.size());
+            fnoSymbols = momentumSymbols.stream()
+                .filter(UniverseService.NIFTY_FNO_SYMBOLS::contains)
+                .collect(Collectors.toList());
+        } else {
+            log.info("No momentum stocks available, using full F&O universe");
+            fnoSymbols = UniverseService.NIFTY_FNO_SYMBOLS;
+        }
 
         // Use map-based resolution — avoids index misalignment when some symbols
         // are not found in the master (old list-based approach caused wrong symbol
@@ -111,7 +127,10 @@ public class BacktestRunnerService {
                 // Problem 3 — fetch A/D ratio once per day (shared across all symbol threads)
                 double adRatio = fetchAdRatio();
                 filterAvailability.record("advanceDeclineRatio", adRatio < 0 || adRatio == 0);
-                log.info("Date {} — A/D ratio={}", date, adRatio);
+                
+                // Categorize trade based on A/D ratio
+                String tradeCategory = momentumStockSnapshotService.categorizeTradeByAdRatio(adRatio);
+                log.info("Date {} — A/D ratio={} Trade Category={}", date, adRatio, tradeCategory);
 
                 // Market trend filter data - fetch once per day
                 double niftyVwap = marketSentimentService.fetchNiftyVWAP();
@@ -237,6 +256,14 @@ public class BacktestRunnerService {
 
             if (trade.isPresent()) {
                 BacktestTrade t = trade.get();
+                
+                // Apply A/D ratio filter to trade direction
+                if (!momentumStockSnapshotService.isTradeDirectionAllowed(adRatio, t.getDirection().name())) {
+                    log.info("  BLOCKED {} {} {} by A/D ratio filter (adRatio={})",
+                            symbol, date, t.getDirection(), adRatio);
+                    totalProcessed.incrementAndGet();
+                    return;
+                }
                 dayTrades.add(t);
                 totalSignals.incrementAndGet();
                 // Increment day loss counter if this trade was a loss

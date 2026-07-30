@@ -46,6 +46,10 @@ public class OrbSymbolState {
     private double openPrice;
     /** Previous day's close — used to compute gap % and show context in alert. */
     private double prevDayClose;
+    /** Previous day's high — used for BUY filter (price needs room to move down to this level) */
+    private double prevDayHigh;
+    /** Previous day's low — used for SELL filter (price needs room to move down to this level) */
+    private double prevDayLow;
 
     private OrbSymbolState() {}
 
@@ -67,6 +71,8 @@ public class OrbSymbolState {
         public Builder openingCandleVolume(long v)         { s.openingCandleVolume = v; return this; }
         public Builder openPrice(double v)                 { s.openPrice = v; return this; }
         public Builder prevDayClose(double v)              { s.prevDayClose = v; return this; }
+        public Builder prevDayHigh(double v)               { s.prevDayHigh = v; return this; }
+        public Builder prevDayLow(double v)                { s.prevDayLow = v; return this; }
         public OrbSymbolState build()                      { return s; }
     }
 
@@ -102,4 +108,10 @@ public class OrbSymbolState {
 
     public double getPrevDayClose()                  { return prevDayClose; }
     public void   setPrevDayClose(double v)          { this.prevDayClose = v; }
+
+    public double getPrevDayHigh()                   { return prevDayHigh; }
+    public void   setPrevDayHigh(double v)           { this.prevDayHigh = v; }
+
+    public double getPrevDayLow()                    { return prevDayLow; }
+    public void   setPrevDayLow(double v)            { this.prevDayLow = v; }
 }

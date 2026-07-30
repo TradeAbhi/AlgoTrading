@@ -22,6 +22,7 @@ public class WatchlistResponse {
     private List<WatchlistItem> volumeShockers;
     private List<WatchlistItem> onlyBuyers;
     private List<WatchlistItem> onlySellers;
+    private List<CombinedCategoryItem> combinedCategory;
 
     private LocalDateTime generatedAt;
     private String marketStatus;      // OPEN / PRE_OPEN / CLOSED

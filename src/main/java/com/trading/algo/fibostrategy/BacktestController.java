@@ -115,6 +115,37 @@ public class BacktestController {
         return ResponseEntity.ok(Map.of("status", "cancellation_requested"));
     }
 
+    /**
+     * POST /api/backtest/run-fno?from=2024-01-01&to=2024-03-31
+     *
+     * Runs the backtest on ALL Nifty F&O stocks (original logic).
+     * No momentum snapshot filter, no A/D direction block.
+     *
+     * curl -X POST "http://localhost:8080/api/backtest/run-fno?from=2024-01-01&to=2024-01-31"
+     */
+    @PostMapping("/run-fno")
+    public ResponseEntity<BacktestSummaryDTO> runFnoBacktest(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "false") boolean clearOld) {
+
+        log.info("POST /api/backtest/run-fno — from={} to={} clearOld={}", from, to, clearOld);
+
+        if (from.isAfter(to)) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        globalCancellationFlag.set(false);
+        BacktestSummaryDTO summary = runner.runFno(from, to, clearOld, globalCancellationFlag);
+
+        if (globalCancellationFlag.get()) {
+            log.info("Backtest FNO was cancelled");
+            return ResponseEntity.status(499).body(summary);
+        }
+
+        return ResponseEntity.ok(summary);
+    }
+
     // =========================================================================
     // SUMMARY
     // =========================================================================

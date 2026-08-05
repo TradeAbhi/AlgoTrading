@@ -2,6 +2,7 @@ package com.trading.algo.controller;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trading.algo.config.BacktestConfig;
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.entity.BacktestTrade;
 import com.trading.algo.entity.CsvStrategySnapshot;
@@ -52,6 +53,7 @@ public class CsvStrategyController {
     private final CsvStrategySnapshotRepository snapshotRepository;
     private final ObjectMapper objectMapper;
     private final RestTemplate restTemplate;
+    private final BacktestConfig config;
 
     /**
      * Upload CSV files and apply both ORB and Fibonacci strategies.
@@ -333,7 +335,9 @@ public class CsvStrategyController {
                                      LocalTime c1Time, LocalTime c2Time,
                                      CopyOnWriteArrayList<BacktestTrade> signals) {
         try {
-            List<Candle> candles = candleService.fetchDayCandles(instrumentKey, date);
+            List<Candle> candles = c2Time.equals(C2_TIME_5M)
+                ? candleService.fetch5mDayCandles(instrumentKey, date)
+                : candleService.fetchDayCandles(instrumentKey, date);
             
             if (candles.isEmpty()) {
                 log.debug("Fibonacci: {} - no candles", symbol);
@@ -350,7 +354,19 @@ public class CsvStrategyController {
                 return;
             }
 
-            Optional<BacktestTrade> trade = fibonacciStrategy.evaluate(symbol, date, candles);
+            List<Candle> previousDayCandles = candleService.fetchDailyCandles(
+                instrumentKey, date.minusDays(5), date.minusDays(1));
+            Candle previousDay = previousDayCandles.stream()
+                .max(Comparator.comparing(Candle::getTimestamp))
+                .orElse(null);
+
+            Optional<BacktestTrade> trade = fibonacciStrategy.evaluate(symbol, date, candles,
+                -1.0, 0.0, 0, config.getFixedRiskRupees(),
+                previousDay == null ? null : previousDay.getOpen(),
+                previousDay == null ? null : previousDay.getHigh(),
+                previousDay == null ? null : previousDay.getLow(),
+                previousDay == null ? null : previousDay.getClose(),
+                0.0, 0.0, 0.0, 0.0, c1Time, c2Time, null);
             if (trade.isPresent()) {
                 signals.add(trade.get());
                 log.info("Fibonacci signal ({}): {} {}", 
@@ -514,10 +530,23 @@ public class CsvStrategyController {
             if (data == null) return result;
 
             List<List<Object>> candles = (List<List<Object>>) data.get("candles");
-            if (candles == null || candles.size() < 2) return result;
+            if (candles == null || candles.isEmpty()) return result;
 
-            // candles[0] = today, candles[1] = previous completed day
-            List<Object> prevDay = candles.get(1);
+            // Select the latest daily candle strictly before the scan date instead of relying on API order.
+            List<Object> prevDay = null;
+            LocalDate previousTradingDate = null;
+            for (List<Object> candle : candles) {
+                if (candle == null || candle.isEmpty()) continue;
+                Optional<LocalDate> candleDate = extractCandleDate(candle.get(0));
+                if (candleDate.isEmpty() || !candleDate.get().isBefore(date)) continue;
+
+                if (previousTradingDate == null || candleDate.get().isAfter(previousTradingDate)) {
+                    previousTradingDate = candleDate.get();
+                    prevDay = candle;
+                }
+            }
+
+            if (prevDay == null || prevDay.size() < 4) return result;
             // [0]=timestamp [1]=open [2]=high [3]=low [4]=close [5]=volume
             result.put("high", toDouble(prevDay.get(2)));
             result.put("low", toDouble(prevDay.get(3)));
@@ -527,6 +556,17 @@ public class CsvStrategyController {
         }
 
         return result;
+    }
+
+    private Optional<LocalDate> extractCandleDate(Object timestamp) {
+        try {
+            String rawTimestamp = String.valueOf(timestamp);
+            return rawTimestamp.length() >= 10
+                ? Optional.of(LocalDate.parse(rawTimestamp.substring(0, 10)))
+                : Optional.empty();
+        } catch (Exception e) {
+            return Optional.empty();
+        }
     }
 
     /**

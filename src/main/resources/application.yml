@@ -12,6 +12,7 @@ backtest:
   fixed-risk-rupees: 10000
   sl-margin-percent: 0.45
   min-c1-body-pct: 0.3      # Problem 4: C1 body >= 0.3% of open price
+  min-candle-body-points: 0.5  # near-disabled — minC1BodyPct handles this relatively
   min-c1-atr-ratio: 0.5    # Problem 1: C1 range >= 0.5x 20-day ATR
   min-c1-volume-multiplier: 1.5  # Problem 2: C1 volume >= 1.5x 5-day avg 9:15 candle volume
 
@@ -48,7 +49,7 @@ spring:
       # Disable the restart classloader provided by Spring Boot DevTools.
       # This avoids classloading issues where the RestartClassLoader can't
       # find newly compiled application classes (NoClassDefFoundError).
-      enabled: false
+      enabled: true
 
   cache:
     type: caffeine
@@ -107,48 +108,42 @@ telegram:
   bot:
     token: ${TELEGRAM_BOT_TOKEN}
   chat:
-    id: ${TELEGRAM_CHAT_ID}
+    id: 780646088
   investment-picks:
     bot:
       token: 8712660586:AAHBTK7jCc-VqPdCAPo-rl5B0OZuvqdus84
-    chat:
-      id: 780646088
   intraday:
     bot:
       token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
-    chat:
-      id: 780646088
   earnings:
     bot:
       token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
-    chat:
-      id: 780646088
   mover:
     bot:
       token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
-    chat:
-      id: 780646088
   delta:
     bot:
       token: 8883503257:AAE3ln_MmU7ETbpqsCROoFhcJqXm5cR50tA
-    chat:
-      id: 780646088
+  index:
+    bot:
+      token: 8662878816:AAEBlRCWGLm97dmRmUo7uHjxhjrQGNrCalM
+  holdings:
+    bot:
+      token: 8865012606:AAEj1okrKJBW0hy0GY73sosdGiidNzsA1qs
+  us:
+    bot:
+      token: 8939720844:AAFq_IDieNzte9Mu7xTxVJH3ZQjr6F-9ta8
 
 # (Fallback values - NOT recommended for production)
 telegram.bot.token: 8271537265:AAGyYMTjdOELAcs2Iq4EvaT60f8-QvHH5v0
 telegram.chat.id: 780646088
 telegram.investment-picks.bot.token: 8712660586:AAHBTK7jCc-VqPdCAPo-rl5B0OZuvqdus84
-telegram.investment-picks.chat.id: 780646088
 telegram.intraday.bot.token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
-telegram.intraday.chat.id: 780646088
 telegram.earnings.bot.token: 8883969071:AAG4eoLxRtfilFG2yByeyUXiYxEzGaZVIfA
-telegram.earnings.chat.id: 780646088
 telegram.mover.bot.token: 8864655349:AAGCjB4FO2GBrcibPMZPh6o3dq89pi1x4_o
-telegram.mover.chat.id: 780646088
 telegram.index.bot.token: 8662878816:AAEBlRCWGLm97dmRmUo7uHjxhjrQGNrCalM
-telegram.index.chat.id: 780646088
-telegram.holdings.bot.token: ${TELEGRAM_HOLDINGS_BOT_TOKEN:}
-telegram.holdings.chat.id: ${TELEGRAM_HOLDINGS_CHAT_ID:}
+telegram.holdings.bot.token: 8865012606:AAEj1okrKJBW0hy0GY73sosdGiidNzsA1qs
+telegram.us.bot.token: 8939720844:AAFq_IDieNzte9Mu7xTxVJH3ZQjr6F-9ta8
 
 
 upstox:
@@ -178,6 +173,21 @@ dhan:
 
 twelvedata:
   api-key: 3f784585013c404186706bf9ba27ef7a
+
+# ============================================================
+# IPO Alerts.in GMP Data Configuration
+# ============================================================
+
+ipoalerts:
+  enabled: true
+  api:
+    base-url: https://ipoalerts.in/api
+    key: ${IPOALERTS_API_KEY:8f3e05e098568fb2c65ff52e215dbd6eb8e01c8adb329c293ac390406632b61b}  # Get from https://ipoalerts.in/dashboard/api-keys
+  gmp:
+    threshold: 15.0             # Alert when GMP > 15%
+    refresh-interval-minutes: 15 # Fetch GMP data every 15 minutes
+    scheduler:
+      cron: "0 0/15 9-17 * * MON-FRI" # Check during market hours (9 AM to 5 PM)
 
 # ============================================================
 # Delta Exchange Alert Service Configuration

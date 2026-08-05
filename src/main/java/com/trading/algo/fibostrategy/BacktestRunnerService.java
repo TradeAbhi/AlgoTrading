@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +43,36 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class BacktestRunnerService {
+
+    /** Tracks which filters were unavailable throughout the backtest */
+    private static class FilterAvailabilityTracker {
+        private final ConcurrentHashMap<String, AtomicInteger> unavailableCounts = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, AtomicInteger> totalSamples = new ConcurrentHashMap<>();
+
+        public void record(String filterName, boolean wasUnavailable) {
+            totalSamples.computeIfAbsent(filterName, k -> new AtomicInteger()).incrementAndGet();
+            if (wasUnavailable) {
+                unavailableCounts.computeIfAbsent(filterName, k -> new AtomicInteger()).incrementAndGet();
+            }
+        }
+
+        public List<BacktestSummaryDTO.FilterDiagnostic> unavailableThroughoutScan() {
+            List<BacktestSummaryDTO.FilterDiagnostic> result = new ArrayList<>();
+            unavailableCounts.forEach((filter, unavailableCount) -> {
+                int total = totalSamples.getOrDefault(filter, new AtomicInteger()).get();
+                if (unavailableCount.get() == total) {
+                    BacktestSummaryDTO.FilterDiagnostic entry = BacktestSummaryDTO.FilterDiagnostic.builder()
+                            .filter(filter)
+                            .samples(total)
+                            .unavailableSamples(unavailableCount.get())
+                            .reason("Input was null, zero, or unavailable for every usable scan sample")
+                            .build();
+                    result.add(entry);
+                }
+            });
+            return result;
+        }
+    }
 
     private final UpstoxHistoricalCandleService  candleService;
     private final UpstoxInstrumentMasterService  instrumentMaster;
@@ -99,6 +130,7 @@ public class BacktestRunnerService {
         AtomicInteger totalSignals   = new AtomicInteger(0);
         AtomicInteger totalProcessed = new AtomicInteger(0);
         FilterAvailabilityTracker filterAvailability = new FilterAvailabilityTracker();
+        OpeningCandleStrategyService.RejectionTracker rejectionTracker = new OpeningCandleStrategyService.RejectionTracker();
 
         ExecutorService pool = Executors.newFixedThreadPool(config.getThreadPoolSize());
 
@@ -157,7 +189,7 @@ public class BacktestRunnerService {
                                 processSymbol(entry.getKey(), entry.getValue(), date,
                                         alreadyProcessed, dayTrades,
                                         totalSignals, totalProcessed, adRatio, dayLossCount,
-                                        niftyVwap, niftyPrice, dailyVix, cancelled, filterAvailability), pool))
+                                        niftyVwap, niftyPrice, dailyVix, cancelled, filterAvailability, rejectionTracker), pool))
                         .collect(Collectors.toList());
 
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -191,7 +223,178 @@ public class BacktestRunnerService {
         log.info("Backtest COMPLETE — processed={} signals={}", totalProcessed.get(), totalSignals.get());
         BacktestSummaryDTO summary = buildSummary(fromDate, toDate, fnoSymbols.size());
         summary.setUnavailableFilters(filterAvailability.unavailableThroughoutScan());
+        summary.setRejectionStats(rejectionTracker.snapshot());
         return summary;
+    }
+
+    // =========================================================================
+    // FNO universe run — scans ALL NIFTY_FNO_SYMBOLS
+    // =========================================================================
+
+    public BacktestSummaryDTO runFno(LocalDate fromDate, LocalDate toDate, boolean clearOld,
+                                     AtomicBoolean cancelled) {
+        log.info("Backtest FNO START — from={} to={} clearOld={}", fromDate, toDate, clearOld);
+
+        if (clearOld) {
+            List<BacktestTrade> old = tradeRepo.findByTradeDateBetweenOrderByTradeDateAsc(fromDate, toDate);
+            tradeRepo.deleteAllInBatch(old);
+            log.info("Cleared {} existing trades in date range", old.size());
+        }
+
+        List<String> fnoSymbols = UniverseService.NIFTY_FNO_SYMBOLS;
+        Map<String, String> symbolKeyMap = instrumentMaster.resolveToInstrumentKeyMap(fnoSymbols);
+
+        log.info("Resolved {}/{} F&O symbols to instrument keys", symbolKeyMap.size(), fnoSymbols.size());
+
+        List<LocalDate> tradingDays = getTradingDays(fromDate, toDate);
+        log.info("Trading days to process: {}", tradingDays.size());
+
+        AtomicInteger totalSignals   = new AtomicInteger(0);
+        AtomicInteger totalProcessed = new AtomicInteger(0);
+        FilterAvailabilityTracker filterAvailability = new FilterAvailabilityTracker();
+        OpeningCandleStrategyService.RejectionTracker rejectionTracker = new OpeningCandleStrategyService.RejectionTracker();
+
+        ExecutorService pool = Executors.newFixedThreadPool(config.getThreadPoolSize());
+
+        try {
+            for (int d = 0; d < tradingDays.size(); d++) {
+                if (cancelled.get()) {
+                    log.info("Backtest FNO cancelled - stopping before day {}", d + 1);
+                    break;
+                }
+
+                LocalDate date = tradingDays.get(d);
+                log.info("Processing date: {} ({}/{})", date, d + 1, tradingDays.size());
+
+                java.util.Set<String> alreadyProcessed = tradeRepo
+                        .findByTradeDateBetweenOrderByTradeDateAsc(date, date)
+                        .stream()
+                        .map(BacktestTrade::getSymbol)
+                        .collect(java.util.stream.Collectors.toSet());
+
+                double adRatio = fetchAdRatio();
+                filterAvailability.record("advanceDeclineRatio", adRatio < 0 || adRatio == 0);
+                log.info("Date {} — A/D ratio={}", date, adRatio);
+
+                double niftyVwap  = marketSentimentService.fetchNiftyVWAP();
+                double niftyPrice = marketSentimentService.fetchNiftyPrice();
+                double vix = 0.0;
+                try { vix = marketSentimentService.fetchVIX(); }
+                catch (Exception e) { log.warn("Failed to fetch VIX for date {}: {}", date, e.getMessage()); }
+                filterAvailability.record("niftyVwap",  niftyVwap  == 0);
+                filterAvailability.record("niftyPrice", niftyPrice == 0);
+                filterAvailability.record("indiaVix",   vix        == 0);
+                log.info("Date {} — Nifty VWAP={} Nifty Price={} VIX={}", date, niftyVwap, niftyPrice, vix);
+                final double dailyVix = vix;
+
+                java.util.concurrent.atomic.AtomicInteger dayLossCount = new java.util.concurrent.atomic.AtomicInteger(0);
+                CopyOnWriteArrayList<BacktestTrade> dayTrades = new CopyOnWriteArrayList<>();
+
+                List<CompletableFuture<Void>> futures = symbolKeyMap.entrySet().stream()
+                        .map(entry -> CompletableFuture.runAsync(() ->
+                                processSymbolFno(entry.getKey(), entry.getValue(), date,
+                                        alreadyProcessed, dayTrades,
+                                        totalSignals, totalProcessed, adRatio, dayLossCount,
+                                        niftyVwap, niftyPrice, dailyVix, cancelled, filterAvailability, rejectionTracker), pool))
+                        .collect(Collectors.toList());
+
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+                if (cancelled.get()) {
+                    log.info("Backtest FNO cancelled during processing");
+                    break;
+                }
+
+                if (!dayTrades.isEmpty()) {
+                    tradeRepo.saveAll(dayTrades);
+                    log.info("Date {} done — {} signals saved (batch), total so far: {}",
+                            date, dayTrades.size(), totalSignals.get());
+                } else {
+                    log.info("Date {} done — no signals, signals so far: {}", date, totalSignals.get());
+                }
+            }
+        } finally {
+            pool.shutdown();
+            try {
+                pool.awaitTermination(10, TimeUnit.MINUTES);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        log.info("Backtest FNO COMPLETE — processed={} signals={}", totalProcessed.get(), totalSignals.get());
+        BacktestSummaryDTO summary = buildSummary(fromDate, toDate, fnoSymbols.size());
+        summary.setUnavailableFilters(filterAvailability.unavailableThroughoutScan());
+        summary.setRejectionStats(rejectionTracker.snapshot());
+        return summary;
+    }
+
+    private void processSymbolFno(String symbol, String instrumentKey, LocalDate date,
+                                   java.util.Set<String> alreadyProcessed,
+                                   CopyOnWriteArrayList<BacktestTrade> dayTrades,
+                                   AtomicInteger totalSignals, AtomicInteger totalProcessed,
+                                   double adRatio,
+                                   java.util.concurrent.atomic.AtomicInteger dayLossCount,
+                                   double niftyVwap, double niftyPrice, double vix,
+                                   AtomicBoolean cancelled,
+                                   FilterAvailabilityTracker filterAvailability,
+                                   OpeningCandleStrategyService.RejectionTracker rejectionTracker) {
+        try {
+            if (cancelled.get()) return;
+            if (alreadyProcessed.contains(symbol)) return;
+            if (dayLossCount.get() >= config.getMaxDailyLosses()) {
+                log.info("Date daily loss cap reached ({}) — skipping {}", config.getMaxDailyLosses(), symbol);
+                return;
+            }
+
+            List<Candle> candles = candleService.fetchDayCandles(instrumentKey, date);
+            if (candles.isEmpty()) {
+                log.debug("{} {} — no candles (holiday or no data)", symbol, date);
+                return;
+            }
+
+            double riskRupees = dayLossCount.get() > 0
+                    ? config.getFixedRiskRupees() * config.getLossSizeReductionFactor()
+                    : config.getFixedRiskRupees();
+
+            double dailyAtr  = 0.0;
+            double atr5m     = compute5mAtr(instrumentKey, date);
+            long avgC1Volume = computeAvgC1Volume(instrumentKey, date);
+
+            Map<String, Double> prevDayOhlc = fetchPrevDayOhlc(instrumentKey, date);
+            Double prevDayHigh  = prevDayOhlc != null ? prevDayOhlc.get("high")  : null;
+            Double prevDayLow   = prevDayOhlc != null ? prevDayOhlc.get("low")   : null;
+            Double prevDayClose = prevDayOhlc != null ? prevDayOhlc.get("close") : null;
+            Double prevDayOpen  = prevDayOhlc != null ? prevDayOhlc.get("open")  : null;
+
+            filterAvailability.record("dailyAtr",        dailyAtr   == 0);
+            filterAvailability.record("atr5m",           atr5m      == 0);
+            filterAvailability.record("averageC1Volume", avgC1Volume == 0);
+            filterAvailability.record("previousDayOhlc",
+                    prevDayHigh == null || prevDayLow == null || prevDayClose == null
+                    || prevDayHigh == 0 || prevDayLow == 0 || prevDayClose == 0);
+
+            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr,
+                    avgC1Volume, riskRupees, prevDayOpen, prevDayHigh, prevDayLow, prevDayClose,
+                    niftyVwap, niftyPrice, vix, atr5m, com.trading.algo.fibostrategy.OpeningCandleStrategyService.C2_TIME, rejectionTracker);
+
+            if (trade.isPresent()) {
+                BacktestTrade t = trade.get();
+                dayTrades.add(t);
+                totalSignals.incrementAndGet();
+                if (t.getOutcome() == com.trading.algo.entity.BacktestTrade.Outcome.SL_HIT) {
+                    dayLossCount.incrementAndGet();
+                }
+                log.info("  ✅ {} {} {} → {}  pnl₹={}",
+                        symbol, date, t.getDirection(), t.getOutcome(),
+                        String.format("%.0f", t.getPnlRupees()));
+            }
+
+            totalProcessed.incrementAndGet();
+
+        } catch (Exception e) {
+            log.error("Error processing {} on {}: {}", symbol, date, e.getMessage());
+        }
     }
 
     // =========================================================================
@@ -206,7 +409,8 @@ public class BacktestRunnerService {
                                 java.util.concurrent.atomic.AtomicInteger dayLossCount,
                                 double niftyVwap, double niftyPrice, double vix,
                                 AtomicBoolean cancelled,
-                                FilterAvailabilityTracker filterAvailability) {
+                                FilterAvailabilityTracker filterAvailability,
+                                OpeningCandleStrategyService.RejectionTracker rejectionTracker) {
         try {
             // Check for cancellation before processing each symbol
             if (cancelled.get()) {
@@ -241,18 +445,19 @@ public class BacktestRunnerService {
             long avgC1Volume = computeAvgC1Volume(instrumentKey, date);
 
             Map<String, Double> prevDayOhlc = fetchPrevDayOhlc(instrumentKey, date);
-            Double prevDayHigh = prevDayOhlc != null ? prevDayOhlc.get("high") : null;
-            Double prevDayLow = prevDayOhlc != null ? prevDayOhlc.get("low") : null;
+            Double prevDayHigh  = prevDayOhlc != null ? prevDayOhlc.get("high")  : null;
+            Double prevDayLow   = prevDayOhlc != null ? prevDayOhlc.get("low")   : null;
             Double prevDayClose = prevDayOhlc != null ? prevDayOhlc.get("close") : null;
+            Double prevDayOpen  = prevDayOhlc != null ? prevDayOhlc.get("open")  : null;
 
-            filterAvailability.record("dailyAtr", dailyAtr == 0);
-            filterAvailability.record("atr5m", atr5m == 0);
+            filterAvailability.record("dailyAtr",        dailyAtr   == 0);
+            filterAvailability.record("atr5m",           atr5m      == 0);
             filterAvailability.record("averageC1Volume", avgC1Volume == 0);
             filterAvailability.record("previousDayOhlc",
                     prevDayHigh == null || prevDayLow == null || prevDayClose == null
                             || prevDayHigh == 0 || prevDayLow == 0 || prevDayClose == 0);
 
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees, prevDayHigh, prevDayLow, prevDayClose, niftyVwap, niftyPrice, vix, atr5m);
+            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees, prevDayOpen, prevDayHigh, prevDayLow, prevDayClose, niftyVwap, niftyPrice, vix, atr5m, com.trading.algo.fibostrategy.OpeningCandleStrategyService.C2_TIME, rejectionTracker);
 
             if (trade.isPresent()) {
                 BacktestTrade t = trade.get();
@@ -375,7 +580,7 @@ public class BacktestRunnerService {
 
     /**
      * Fetch previous day's OHLC data for the given instrument key and date.
-     * Returns a map with "high", "low", "close" keys, or null if unavailable.
+     * Returns a map with "open", "high", "low", "close" keys, or null if unavailable.
      */
     private Map<String, Double> fetchPrevDayOhlc(String instrumentKey, LocalDate date) {
         try {
@@ -390,8 +595,9 @@ public class BacktestRunnerService {
             }
             Candle prevDayCandle = dailyCandles.get(0);
             return Map.of(
-                    "high", prevDayCandle.getHigh(),
-                    "low", prevDayCandle.getLow(),
+                    "open",  prevDayCandle.getOpen(),
+                    "high",  prevDayCandle.getHigh(),
+                    "low",   prevDayCandle.getLow(),
                     "close", prevDayCandle.getClose()
             );
         } catch (Exception e) {
@@ -492,42 +698,6 @@ public class BacktestRunnerService {
                 .topSymbols(top10)
                 .worstSymbols(worst10)
                 .build();
-    }
-
-    // =========================================================================
-    // Filter availability diagnostics
-    // =========================================================================
-
-    /** Thread-safe counters for filter inputs observed during one backtest run. */
-    private static class FilterAvailabilityTracker {
-        private final Map<String, FilterAvailability> filters = new ConcurrentHashMap<>();
-
-        void record(String filter, boolean unavailable) {
-            FilterAvailability availability = filters.computeIfAbsent(filter, ignored -> new FilterAvailability());
-            availability.samples.incrementAndGet();
-            if (unavailable) {
-                availability.unavailableSamples.incrementAndGet();
-            }
-        }
-
-        List<BacktestSummaryDTO.FilterDiagnostic> unavailableThroughoutScan() {
-            return filters.entrySet().stream()
-                    .filter(entry -> entry.getValue().samples.get() > 0
-                            && entry.getValue().samples.get() == entry.getValue().unavailableSamples.get())
-                    .map(entry -> BacktestSummaryDTO.FilterDiagnostic.builder()
-                            .filter(entry.getKey())
-                            .samples(entry.getValue().samples.get())
-                            .unavailableSamples(entry.getValue().unavailableSamples.get())
-                            .reason("Input was null, zero, or unavailable for every usable scan sample")
-                            .build())
-                    .sorted((left, right) -> left.getFilter().compareTo(right.getFilter()))
-                    .collect(Collectors.toList());
-        }
-    }
-
-    private static class FilterAvailability {
-        private final AtomicInteger samples = new AtomicInteger();
-        private final AtomicInteger unavailableSamples = new AtomicInteger();
     }
 
     // =========================================================================

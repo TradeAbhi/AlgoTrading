@@ -51,4 +51,23 @@ public class LiveStrategyController {
                 "telegramSent", true
         ));
     }
+
+    /**
+     * POST /api/live-strategy/scan-fno
+     *
+     * Manually triggers the FNO all-stocks scan (original logic).
+     * Scans all Nifty F&O stocks + indexes, no momentum/A-D filter.
+     *
+     * curl -X POST http://localhost:8080/api/live-strategy/scan-fno
+     */
+    @PostMapping("/scan-fno")
+    public ResponseEntity<Map<String, Object>> triggerFnoScan() {
+        log.info("POST /api/live-strategy/scan-fno — manual trigger");
+        int signals = liveStrategyAlertService.scanAndAlertFno();
+        return ResponseEntity.ok(Map.of(
+                "status", "FNO scan complete",
+                "setupsFound", signals,
+                "telegramSent", true
+        ));
+    }
 }

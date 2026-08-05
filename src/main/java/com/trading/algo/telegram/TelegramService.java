@@ -23,34 +23,24 @@ public class TelegramService {
     private final String      botToken;
     private final String      chatId;
     private final String      investmentPicksBotToken;
-    private final String      investmentPicksChatId;
     private final String      intradayBotToken;
-    private final String      intradayChatId;
     private final String      earningsBotToken;
-    private final String      earningsChatId;
     private final String      moverBotToken;
-    private final String      moverChatId;
     private final String      indexBotToken;
-    private final String      indexChatId;
     private final String      holdingsBotToken;
-    private final String      holdingsChatId;
+    private final String      usBotToken;
     private final RestTemplate restTemplate = new RestTemplate();
 
     public TelegramService(Environment env) {
         this.botToken = env.getProperty("telegram.bot.token");
         this.chatId   = env.getProperty("telegram.chat.id");
         this.investmentPicksBotToken = env.getProperty("telegram.investment-picks.bot.token");
-        this.investmentPicksChatId = env.getProperty("telegram.investment-picks.chat.id");
         this.intradayBotToken = env.getProperty("telegram.intraday.bot.token");
-        this.intradayChatId = env.getProperty("telegram.intraday.chat.id");
         this.earningsBotToken = env.getProperty("telegram.earnings.bot.token");
-        this.earningsChatId = env.getProperty("telegram.earnings.chat.id");
         this.moverBotToken = env.getProperty("telegram.mover.bot.token");
-        this.moverChatId = env.getProperty("telegram.mover.chat.id");
         this.indexBotToken = env.getProperty("telegram.index.bot.token");
-        this.indexChatId = env.getProperty("telegram.index.chat.id");
         this.holdingsBotToken = env.getProperty("telegram.holdings.bot.token");
-        this.holdingsChatId = env.getProperty("telegram.holdings.chat.id");
+        this.usBotToken = env.getProperty("telegram.us.bot.token");
     }
 
     // ── Text message (existing — unchanged) ──────────────────────────────────
@@ -181,19 +171,19 @@ public class TelegramService {
      * Used for weekly/daily breakout strategy alerts.
      */
     public void sendMessageToInvestmentPicks(String message) {
-        if (investmentPicksBotToken == null || investmentPicksChatId == null) {
-            log.warn("Investment picks bot token/chat ID not configured, message not sent");
+        if (investmentPicksBotToken == null) {
+            log.warn("Investment picks bot token not configured, message not sent");
             return;
         }
-        sendChunkedMessage(investmentPicksBotToken, investmentPicksChatId, message, "Investment picks");
+        sendChunkedMessage(investmentPicksBotToken, chatId, message, "Investment picks");
     }
 
     /**
      * Sends a document to the Investment Picks bot/channel.
      */
     public void sendDocumentToInvestmentPicks(byte[] fileBytes, String fileName, String caption) {
-        if (investmentPicksBotToken == null || investmentPicksChatId == null) {
-            log.warn("Investment picks bot token/chat ID not configured, document not sent");
+        if (investmentPicksBotToken == null) {
+            log.warn("Investment picks bot token not configured, document not sent");
             return;
         }
         try {
@@ -201,7 +191,7 @@ public class TelegramService {
 
             // Build multipart body
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            body.add("chat_id",    investmentPicksChatId);
+            body.add("chat_id",    chatId);
             body.add("parse_mode", "Markdown");
 
             if (caption != null && !caption.isBlank()) {
@@ -238,11 +228,11 @@ public class TelegramService {
       * Triggered every 15 minutes during trading hours.
       */
      public void sendMessageToIntraday(String message) {
-         if (intradayBotToken == null || intradayChatId == null) {
-             log.warn("Intraday bot token/chat ID not configured, message not sent");
+         if (intradayBotToken == null) {
+             log.warn("Intraday bot token not configured, message not sent");
              return;
          }
-         sendChunkedMessage(intradayBotToken, intradayChatId, message, "Intraday");
+         sendChunkedMessage(intradayBotToken, chatId, message, "Intraday");
      }
 
      /**
@@ -250,8 +240,8 @@ public class TelegramService {
       * Used for intraday CSV reports (top gainers/losers, advance/decline data, etc.).
       */
      public void sendDocumentToIntraday(byte[] fileBytes, String fileName, String caption) {
-         if (intradayBotToken == null || intradayChatId == null) {
-             log.warn("Intraday bot token/chat ID not configured, document not sent");
+         if (intradayBotToken == null) {
+             log.warn("Intraday bot token not configured, document not sent");
              return;
          }
          try {
@@ -259,7 +249,7 @@ public class TelegramService {
 
              // Build multipart body
              MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-             body.add("chat_id",    intradayChatId);
+             body.add("chat_id",    chatId);
              body.add("parse_mode", "Markdown");
 
              if (caption != null && !caption.isBlank()) {
@@ -295,11 +285,11 @@ public class TelegramService {
       * Used for earnings-related alerts: weekly summaries, 7-day ahead, day ahead, today alerts.
       */
      public void sendMessageToEarnings(String message) {
-         if (earningsBotToken == null || earningsChatId == null) {
-             log.warn("Earnings bot token/chat ID not configured, message not sent");
+         if (earningsBotToken == null) {
+             log.warn("Earnings bot token not configured, message not sent");
              return;
          }
-         sendChunkedMessage(earningsBotToken, earningsChatId, message, "Earnings");
+         sendChunkedMessage(earningsBotToken, chatId, message, "Earnings");
      }
 
      /**
@@ -307,8 +297,8 @@ public class TelegramService {
       * Used for earnings-related CSV reports.
       */
      public void sendDocumentToEarnings(byte[] fileBytes, String fileName, String caption) {
-         if (earningsBotToken == null || earningsChatId == null) {
-             log.warn("Earnings bot token/chat ID not configured, document not sent");
+         if (earningsBotToken == null) {
+             log.warn("Earnings bot token not configured, document not sent");
              return;
          }
          try {
@@ -316,7 +306,7 @@ public class TelegramService {
 
              // Build multipart body
              MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-             body.add("chat_id",    earningsChatId);
+             body.add("chat_id",    chatId);
              body.add("parse_mode", "Markdown");
 
              if (caption != null && !caption.isBlank()) {
@@ -352,11 +342,11 @@ public class TelegramService {
       * Used for mover analysis alerts: stock movers, sector analysis, etc.
       */
      public void sendMessageToMover(String message) {
-         if (moverBotToken == null || moverChatId == null) {
-             log.warn("Mover bot token/chat ID not configured, message not sent");
+         if (moverBotToken == null) {
+             log.warn("Mover bot token not configured, message not sent");
              return;
          }
-         sendChunkedMessage(moverBotToken, moverChatId, message, "Mover");
+         sendChunkedMessage(moverBotToken, chatId, message, "Mover");
      }
 
      /**
@@ -364,8 +354,8 @@ public class TelegramService {
       * Used for mover analysis CSV reports.
       */
      public void sendDocumentToMover(byte[] fileBytes, String fileName, String caption) {
-         if (moverBotToken == null || moverChatId == null) {
-             log.warn("Mover bot token/chat ID not configured, document not sent");
+         if (moverBotToken == null) {
+             log.warn("Mover bot token not configured, document not sent");
              return;
          }
          try {
@@ -373,7 +363,7 @@ public class TelegramService {
 
              // Build multipart body
              MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-             body.add("chat_id",    moverChatId);
+             body.add("chat_id",    chatId);
              body.add("parse_mode", "Markdown");
 
              if (caption != null && !caption.isBlank()) {
@@ -410,21 +400,34 @@ public class TelegramService {
       * and Index Strength alerts for Nifty 50 and Bank Nifty.
       */
      public void sendMessageToIndex(String message) {
-         if (indexBotToken == null || indexChatId == null) {
-             log.warn("Index bot token/chat ID not configured, message not sent");
+         if (indexBotToken == null) {
+             log.warn("Index bot token not configured, message not sent");
              return;
          }
-         sendChunkedMessage(indexBotToken, indexChatId, message, "Index");
+         sendChunkedMessage(indexBotToken, chatId, message, "Index");
      }
 
     /** Sends an alert produced by the consolidated Upstox/Dhan holdings scan. */
     public void sendMessageToHoldings(String message) {
-        if (holdingsBotToken == null || holdingsBotToken.isBlank()
-                || holdingsChatId == null || holdingsChatId.isBlank()) {
-            log.warn("Holdings bot token/chat ID not configured, message not sent");
+        if (holdingsBotToken == null || holdingsBotToken.isBlank()) {
+            log.warn("Holdings bot token not configured, message not sent");
             return;
         }
-        sendChunkedMessage(holdingsBotToken, holdingsChatId, message, "Holdings");
+        sendChunkedMessage(holdingsBotToken, chatId, message, "Holdings");
+    }
+
+    // ── US Bot (US Weekly Breakout alerts) ───────────────────────────────────
+
+    /**
+     * Sends a message to the US bot.
+     * Used for US Weekly Breakout strategy alerts.
+     */
+    public void sendMessageToUs(String message) {
+        if (usBotToken == null) {
+            log.warn("US bot token not configured, message not sent");
+            return;
+        }
+        sendChunkedMessage(usBotToken, chatId, message, "US");
     }
 
  }

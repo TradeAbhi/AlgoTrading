@@ -14,6 +14,8 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Opening Candle Strategy:
@@ -40,15 +42,38 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class OpeningCandleStrategyService {
 
-    private static final LocalTime C1_TIME  = LocalTime.of(9, 15);
-    private static final LocalTime C2_TIME  = LocalTime.of(9, 30);
+    /** Tracks per-run rejection counts across all threads. */
+    public static class RejectionTracker {
+        private final ConcurrentHashMap<String, AtomicInteger> counts = new ConcurrentHashMap<>();
+
+        public void increment(String reason) {
+            counts.computeIfAbsent(reason, k -> new AtomicInteger()).incrementAndGet();
+        }
+
+        public java.util.Map<String, Integer> snapshot() {
+            java.util.Map<String, Integer> map = new java.util.LinkedHashMap<>();
+            counts.forEach((k, v) -> map.put(k, v.get()));
+            return map;
+        }
+    }
+
+    public static final LocalTime C1_TIME  = LocalTime.of(9, 15);
+    public static final LocalTime C2_TIME  = LocalTime.of(9, 30);
     private static final LocalTime EOD_TIME = LocalTime.of(15, 15);
 
     private final BacktestConfig config;
 
     /** Backward-compatible overload — uses full fixedRiskRupees, no external filters */
     public Optional<BacktestTrade> evaluate(String symbol, LocalDate date, List<Candle> candles) {
-        return evaluate(symbol, date, candles, -1.0, 0.0, 0, config.getFixedRiskRupees(), null, null, null, 0.0, 0.0, 0.0, 0.0);
+        return evaluate(symbol, date, candles, -1.0, 0.0, 0, config.getFixedRiskRupees(), null, null, null, null, 0.0, 0.0, 0.0, 0.0, C2_TIME, null);
+    }
+
+    /** Backward-compatible overload with prevDayOpen */
+    public Optional<BacktestTrade> evaluate(String symbol, LocalDate date, List<Candle> candles,
+                                            double adRatio, double dailyAtr, long avgC1Volume,
+                                            double riskRupees, Double prevDayOpen, Double prevDayHigh, Double prevDayLow, Double prevDayClose,
+                                            double niftyVwap, double niftyPrice, double vix, double atr5m) {
+        return evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees, prevDayOpen, prevDayHigh, prevDayLow, prevDayClose, niftyVwap, niftyPrice, vix, atr5m, C2_TIME, null);
     }
 
     /**
@@ -56,6 +81,7 @@ public class OpeningCandleStrategyService {
      * @param dailyAtr    20-day ATR in points (0 = skip filter)
      * @param avgC1Volume 5-day avg 9:15 candle volume (0 = skip filter)
      * @param riskRupees  risk in rupees — may be reduced after consecutive losses (Improvement 10)
+     * @param prevDayOpen previous day's open price (null = unavailable)
      * @param prevDayHigh previous day's high price (null = unavailable)
      * @param prevDayLow  previous day's low price (null = unavailable)
      * @param prevDayClose previous day's close price (null = unavailable)
@@ -63,11 +89,25 @@ public class OpeningCandleStrategyService {
      * @param niftyPrice  Current Nifty price for market trend filter (0 = unavailable)
      * @param vix         India VIX for market trend filter (0 = unavailable)
      * @param atr5m       5-minute ATR for exhausted moves filter (0 = skip filter)
+     * @param c2Time      C2 candle time (default C2_TIME)
+     * @param tracker     RejectionTracker for tracking rejection reasons
      */
     public Optional<BacktestTrade> evaluate(String symbol, LocalDate date, List<Candle> candles,
                                             double adRatio, double dailyAtr, long avgC1Volume,
-                                            double riskRupees, Double prevDayHigh, Double prevDayLow, Double prevDayClose,
-                                            double niftyVwap, double niftyPrice, double vix, double atr5m) {
+                                            double riskRupees, Double prevDayOpen, Double prevDayHigh, Double prevDayLow, Double prevDayClose,
+                                            double niftyVwap, double niftyPrice, double vix, double atr5m,
+                                            LocalTime c2Time, RejectionTracker tracker) {
+        return evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees,
+                prevDayOpen, prevDayHigh, prevDayLow, prevDayClose, niftyVwap, niftyPrice, vix, atr5m,
+                C1_TIME, c2Time, tracker);
+    }
+
+    /** Evaluates a setup using caller-supplied C1 and C2 candle times. */
+    public Optional<BacktestTrade> evaluate(String symbol, LocalDate date, List<Candle> candles,
+                                            double adRatio, double dailyAtr, long avgC1Volume,
+                                            double riskRupees, Double prevDayOpen, Double prevDayHigh, Double prevDayLow, Double prevDayClose,
+                                            double niftyVwap, double niftyPrice, double vix, double atr5m,
+                                            LocalTime c1Time, LocalTime c2Time, RejectionTracker tracker) {
         log.info("{} {} — evaluating {} candles | wr={} bodyPts={} bodyPct={}% atrRatio={} adRatio={} avgC1Vol={}",
                 symbol, date, candles == null ? 0 : candles.size(),
                 config.getMinWickRatio(), config.getMinCandleBodyPoints(),
@@ -75,16 +115,17 @@ public class OpeningCandleStrategyService {
 
         if (candles == null || candles.size() < 3) return Optional.empty();
 
-        Candle c1 = findCandle(candles, C1_TIME);
-        Candle c2 = findCandle(candles, C2_TIME);
+        Candle c1 = findCandle(candles, c1Time);
+        Candle c2 = findCandle(candles, c2Time);
 
         if (c1 == null || c2 == null) {
             log.info("{} {} — C1 or C2 not found", symbol, date);
+            if (tracker != null) tracker.increment("C1/C2 Not Found");
             return Optional.empty();
         }
 
         // ── STEP 1: C1 qualification ─────────────────────────────────────────
-        if (!isStrongCandle(c1, dailyAtr, avgC1Volume)) {
+        if (!isStrongCandle(c1, dailyAtr, avgC1Volume, tracker)) {
             log.info("{} {} — C1 WEAK: wr={} body={} bodyPct={}% range={} vol={} (atr={} avgVol={})",
                     symbol, date,
                     String.format("%.4f", c1.wickRatio()),
@@ -96,6 +137,7 @@ public class OpeningCandleStrategyService {
 
         // ── Exhausted moves filter ─────────────────────────────────────────────
         if (atr5m > 0 && c1.range() > 2.0 * atr5m) {
+            if (tracker != null) tracker.increment("Exhausted Move (ATR5m)");
             log.info("{} {} — EXHAUSTED MOVE: C1 range={} > 2x ATR5m={}",
                     symbol, date, String.format("%.2f", c1.range()), String.format("%.2f", atr5m));
             return Optional.empty();
@@ -114,6 +156,7 @@ public class OpeningCandleStrategyService {
                     : ((prevDayClose - c1.getLow()) / prevDayClose) * 100.0;
 
             if (gapPct > 1.0 && movedPct > 1.5) {
+                if (tracker != null) tracker.increment("Gap Exhaustion");
                 log.info("{} {} — GAP EXHAUSTION: gap={} moved={} direction={}", symbol, date,
                         String.format("%.2f%%", gapPct), String.format("%.2f%%", movedPct), direction);
                 return Optional.empty();
@@ -125,6 +168,7 @@ public class OpeningCandleStrategyService {
             boolean buyBlocked  = adRatio < 0.7 && direction == Direction.BUY;
             boolean sellBlocked = adRatio > 1.5 && direction == Direction.SELL;
             if (buyBlocked || sellBlocked) {
+                if (tracker != null) tracker.increment("A/D Ratio Filter");
                 log.info("{} {} — BLOCKED by A/D filter: adRatio={} direction={}", symbol, date, adRatio, direction);
                 return Optional.empty();
             }
@@ -138,6 +182,7 @@ public class OpeningCandleStrategyService {
             if (direction == Direction.BUY) {
                 // BUY only when: Nifty above VWAP AND A/D > 1.5 AND VIX stable
                 if (!niftyAboveVwap || (adRatio >= 0 && adRatio < 1.5) || !vixStable) {
+                    if (tracker != null) tracker.increment("Market Trend Filter");
                     log.info("{} {} — BLOCKED by market trend filter: niftyAboveVwap={} adRatio={} vixStable={}",
                             symbol, date, niftyAboveVwap, adRatio, vixStable);
                     return Optional.empty();
@@ -145,6 +190,7 @@ public class OpeningCandleStrategyService {
             } else {
                 // SELL only when: Nifty below VWAP AND A/D < 0.67
                 if (niftyAboveVwap || (adRatio >= 0 && adRatio >= 0.67)) {
+                    if (tracker != null) tracker.increment("Market Trend Filter");
                     log.info("{} {} — BLOCKED by market trend filter: niftyAboveVwap={} adRatio={}",
                             symbol, date, niftyAboveVwap, adRatio);
                     return Optional.empty();
@@ -154,6 +200,7 @@ public class OpeningCandleStrategyService {
 
         // ── STEP 2: C2 confirmation ───────────────────────────────────────────
         if (!isValidC2(c1, c2, direction)) {
+            if (tracker != null) tracker.increment("C2 Failed");
             log.info("{} {} — C2 FAILED {} confirmation: fifty={} c2.low={} c2.high={} c2.vol={} c1.vol={}",
                     symbol, date, direction,
                     String.format("%.2f", (c1.getHigh() + c1.getLow()) / 2),
@@ -184,6 +231,8 @@ public class OpeningCandleStrategyService {
             return Optional.empty();
         }
 
+        if (tracker != null) tracker.increment("Passed All Filters");
+
         log.info("{} {} — {} | Entry={} SL={} Target={} Risk={}pts partialAt={}R",
                 symbol, date, direction,
                 String.format("%.2f", entry), String.format("%.2f", sl),
@@ -192,19 +241,34 @@ public class OpeningCandleStrategyService {
 
         // ── STEP 4: Simulate ──────────────────────────────────────────────────
         return Optional.of(simulateTrade(symbol, date, direction, c1, c2,
-                entry, sl, target, risk, candles, riskRupees, prevDayHigh, prevDayLow, prevDayClose));
+                entry, sl, target, risk, candles, riskRupees, prevDayOpen, prevDayHigh, prevDayLow, prevDayClose, c2Time));
     }
 
     // =========================================================================
     // Step 1 — C1 strong candle check
     // =========================================================================
 
-    private boolean isStrongCandle(Candle c, double dailyAtr, long avgC1Volume) {
-        if (c.body() < config.getMinCandleBodyPoints()) return false;
-        if (c.wickRatio() < config.getMinWickRatio()) return false;
-        if (c.getOpen() > 0 && c.body() / c.getOpen() * 100.0 < config.getMinC1BodyPct()) return false;
-        if (dailyAtr > 0 && c.range() < config.getMinC1AtrRatio() * dailyAtr) return false;
-        if (avgC1Volume > 0 && c.getVolume() < config.getMinC1VolumeMultiplier() * avgC1Volume) return false;
+    private boolean isStrongCandle(Candle c, double dailyAtr, long avgC1Volume, RejectionTracker tracker) {
+        if (c.body() < config.getMinCandleBodyPoints()) {
+            if (tracker != null) tracker.increment("C1 Weak: Body Points");
+            return false;
+        }
+        if (c.wickRatio() < config.getMinWickRatio()) {
+            if (tracker != null) tracker.increment("C1 Weak: Wick Ratio");
+            return false;
+        }
+        if (c.getOpen() > 0 && c.body() / c.getOpen() * 100.0 < config.getMinC1BodyPct()) {
+            if (tracker != null) tracker.increment("C1 Weak: Body Pct");
+            return false;
+        }
+        if (dailyAtr > 0 && c.range() < config.getMinC1AtrRatio() * dailyAtr) {
+            if (tracker != null) tracker.increment("C1 Weak: ATR Ratio");
+            return false;
+        }
+        if (avgC1Volume > 0 && c.getVolume() < config.getMinC1VolumeMultiplier() * avgC1Volume) {
+            if (tracker != null) tracker.increment("C1 Weak: Volume");
+            return false;
+        }
         return true;
     }
 
@@ -267,7 +331,7 @@ public class OpeningCandleStrategyService {
             Candle c1, Candle c2,
             double entry, double sl, double target, double risk,
             List<Candle> candles, double riskRupees,
-            Double prevDayHigh, Double prevDayLow, Double prevDayClose) {
+            Double prevDayOpen, Double prevDayHigh, Double prevDayLow, Double prevDayClose, LocalTime c2Time) {
 
         double activeSl       = sl;
         double exitPrice      = entry;
@@ -283,7 +347,7 @@ public class OpeningCandleStrategyService {
         double  remainPct     = 1.0 - partialPct;
 
         for (Candle c : candles) {
-            if (!c.getTimestamp().toLocalTime().isAfter(C2_TIME)) continue;
+            if (!c.getTimestamp().toLocalTime().isAfter(c2Time)) continue;
 
             boolean isEod = !c.getTimestamp().toLocalTime().isBefore(EOD_TIME);
 
@@ -326,6 +390,14 @@ public class OpeningCandleStrategyService {
         }
 
         // ── P&L — weighted across partial + remainder legs ────────────────────
+        // C3: first candle closing above C2 high (BUY) or below C2 low (SELL)
+        Candle c3 = null;
+        for (Candle c : candles) {
+            if (!c.getTimestamp().toLocalTime().isAfter(c2Time)) continue;
+            if (direction == Direction.BUY && c.getClose() > c2.getHigh()) { c3 = c; break; }
+            if (direction == Direction.SELL && c.getClose() < c2.getLow()) { c3 = c; break; }
+        }
+
         int quantity = risk > 0 ? (int) Math.floor(riskRupees / risk) : 0;
 
         double pnlPoints;
@@ -364,9 +436,16 @@ public class OpeningCandleStrategyService {
                 .outcome(outcome).exitPrice(exitPrice)
                 .pnlPoints(pnlPoints).pnlPercent(pnlPercent).actualRR(actualRR)
                 .exitCandleTime(exitDt)
+                .prevDayOpen(prevDayOpen)
                 .prevDayHigh(prevDayHigh)
                 .prevDayLow(prevDayLow)
                 .prevDayClose(prevDayClose)
+                .c1AbovePrevHigh(prevDayHigh != null && c1.getOpen() > prevDayHigh)
+                .c1AbovePrevLow(prevDayLow != null && c1.getOpen() > prevDayLow)
+                .c3Open(c3 != null ? c3.getOpen() : null)
+                .c3High(c3 != null ? c3.getHigh() : null)
+                .c3Low(c3 != null ? c3.getLow() : null)
+                .c3Close(c3 != null ? c3.getClose() : null)
                 .createdAt(java.time.LocalDateTime.now())
                 .build();
     }

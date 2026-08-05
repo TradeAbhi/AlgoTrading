@@ -98,10 +98,11 @@ public class IndexBacktestService {
                 Double prevDayHigh = prevDayOhlc != null ? prevDayOhlc.get("high") : null;
                 Double prevDayLow = prevDayOhlc != null ? prevDayOhlc.get("low") : null;
                 Double prevDayClose = prevDayOhlc != null ? prevDayOhlc.get("close") : null;
+                Double prevDayOpen = prevDayOhlc != null ? prevDayOhlc.get("open") : null;
 
                 // Reuse the same strategy service — same rules apply to indexes
                 Optional<com.trading.algo.entity.BacktestTrade> result =
-                        strategy.evaluate(indexName.name(), date, candles, -1.0, 0.0, 0, config.getFixedRiskRupees(), prevDayHigh, prevDayLow, prevDayClose, 0.0, 0.0, 0.0, 0.0);
+                        strategy.evaluate(indexName.name(), date, candles, -1.0, 0.0, 0, config.getFixedRiskRupees(), prevDayOpen, prevDayHigh, prevDayLow, prevDayClose, 0.0, 0.0, 0.0, 0.0);
 
                 if (result.isPresent()) {
                     com.trading.algo.entity.BacktestTrade t = result.get();
@@ -226,7 +227,7 @@ public class IndexBacktestService {
 
     /**
      * Fetch previous day's OHLC data for the given instrument key and date.
-     * Returns a map with "high", "low", "close" keys, or null if unavailable.
+     * Returns a map with "open", "high", "low", "close" keys, or null if unavailable.
      */
     private Map<String, Double> fetchPrevDayOhlc(String instrumentKey, LocalDate date) {
         try {
@@ -241,6 +242,7 @@ public class IndexBacktestService {
             }
             Candle prevDayCandle = dailyCandles.get(0);
             return Map.of(
+                    "open", prevDayCandle.getOpen(),
                     "high", prevDayCandle.getHigh(),
                     "low", prevDayCandle.getLow(),
                     "close", prevDayCandle.getClose()

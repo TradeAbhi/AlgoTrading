@@ -4,6 +4,8 @@ import com.trading.algo.discord.DiscordService;
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.ipo.Ipo;
 import com.trading.algo.ipo.IpoRepository;
+     import com.trading.algo.ipo.IpoSignal;
+import com.trading.algo.ipo.IpoSignalCategorizer;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
@@ -17,6 +19,7 @@ import java.time.LocalDate;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -86,7 +89,8 @@ public class IpoStrategyMonitorService {
 
         List<IpoSignal> freshSignals = signals.stream()
                 .filter(this::notAlertedToday)
-                .sorted(Comparator.comparingInt(IpoSignal::priority).reversed()
+                .sorted(Comparator.comparingInt(IpoSignal::convictionTier)
+                        .thenComparingInt(IpoSignal::priority).reversed()
                         .thenComparingDouble(IpoSignal::changePct).reversed())
                 .toList();
 
@@ -119,11 +123,32 @@ public class IpoStrategyMonitorService {
                 ? ((current.close() - previous.close()) / previous.close()) * 100.0
                 : 0;
 
+        // Get previous 10 days data from daily bars for momentum calculation
+        double previous10DaysHigh = getPrevious10DaysHigh(completed);
+
+        // Calculate body strength metrics
+        double bodyPercentage = IpoSignalCategorizer.calculateBodyPercentage(
+                current.open(), current.close(), current.high(), current.low());
+        boolean strongBody = IpoSignalCategorizer.isStrongBody(
+                current.open(), current.close(), current.high(), current.low());
+
+        // Calculate momentum
+        boolean momentumPass = IpoSignalCategorizer.isMomentumPass(current.close(), previous10DaysHigh);
+        double momentumStrength = IpoSignalCategorizer.calculateMomentumStrength(
+                current.close(), previous10DaysHigh);
+
+        // Categorize gain
+        String gainCategory = IpoSignalCategorizer.getGainCategory(changePct);
+
         boolean weeklyBreakout = current.close() > rangeHigh;
         boolean weeklyBreakdown = current.close() < rangeLow;
         boolean reversalBreakout = weeklyBreakout && isDowntrend(completed);
 
         if (reversalBreakout) {
+            int score = IpoSignalCategorizer.calculateConvictionScore(
+                    "REVERSAL BREAKOUT", momentumPass, strongBody, gainCategory);
+            int tier = IpoSignalCategorizer.getConvictionTier(score);
+
             return Optional.of(new IpoSignal(
                     ipo.getName(),
                     ipo.getSymbol(),
@@ -133,11 +158,26 @@ public class IpoStrategyMonitorService {
                     rangeHigh,
                     rangeLow,
                     changePct,
-                    "Downtrend base broken on upside"
+                    "Downtrend base broken on upside",
+                    momentumPass,
+                    previous10DaysHigh,
+                    momentumStrength,
+                    current.open(),
+                    current.high(),
+                    current.low(),
+                    bodyPercentage,
+                    strongBody,
+                    gainCategory,
+                    tier,
+                    score
             ));
         }
 
         if (weeklyBreakout) {
+            int score = IpoSignalCategorizer.calculateConvictionScore(
+                    "WEEKLY BREAKOUT", momentumPass, strongBody, gainCategory);
+            int tier = IpoSignalCategorizer.getConvictionTier(score);
+
             return Optional.of(new IpoSignal(
                     ipo.getName(),
                     ipo.getSymbol(),
@@ -147,11 +187,26 @@ public class IpoStrategyMonitorService {
                     rangeHigh,
                     rangeLow,
                     changePct,
-                    "Close above recent weekly range"
+                    "Close above recent weekly range",
+                    momentumPass,
+                    previous10DaysHigh,
+                    momentumStrength,
+                    current.open(),
+                    current.high(),
+                    current.low(),
+                    bodyPercentage,
+                    strongBody,
+                    gainCategory,
+                    tier,
+                    score
             ));
         }
 
         if (weeklyBreakdown) {
+            int score = IpoSignalCategorizer.calculateConvictionScore(
+                    "WEEKLY BREAKDOWN", momentumPass, strongBody, gainCategory);
+            int tier = IpoSignalCategorizer.getConvictionTier(score);
+
             return Optional.of(new IpoSignal(
                     ipo.getName(),
                     ipo.getSymbol(),
@@ -161,7 +216,18 @@ public class IpoStrategyMonitorService {
                     rangeHigh,
                     rangeLow,
                     changePct,
-                    "Close below recent weekly support"
+                    "Close below recent weekly support",
+                    momentumPass,
+                    previous10DaysHigh,
+                    momentumStrength,
+                    current.open(),
+                    current.high(),
+                    current.low(),
+                    bodyPercentage,
+                    strongBody,
+                    gainCategory,
+                    tier,
+                    score
             ));
         }
 
@@ -194,6 +260,24 @@ public class IpoStrategyMonitorService {
                 : 0;
 
         return totalMovePct <= -8.0 || (lowerCloseCount >= 2 && lowerHighCount >= 2);
+    }
+
+    /**
+     * Get the highest close from the previous weeks (approximate last 10 days)
+     * Uses weekly bar closes as a proxy since we're working with weekly aggregates
+     */
+    private double getPrevious10DaysHigh(List<WeeklyBar> completedWeeks) {
+        if (completedWeeks.isEmpty()) {
+            return 0.0;
+        }
+
+        // Take the max of the last 2-3 weeks to approximate 10 trading days
+        int lookback = Math.min(3, completedWeeks.size());
+        return completedWeeks.stream()
+                .skip(completedWeeks.size() - lookback)
+                .mapToDouble(WeeklyBar::high)
+                .max()
+                .orElse(0.0);
     }
 
     private List<DailyBar> fetchDailyBars(String instrumentKey, LocalDate listingDate, LocalDate today) {
@@ -266,21 +350,51 @@ public class IpoStrategyMonitorService {
     }
 
     private String buildMessage(List<IpoSignal> signals, int total, int skipped) {
+        // Group signals by conviction tier
+        Map<Integer, List<IpoSignal>> signalsByTier = signals.stream()
+                .collect(Collectors.groupingBy(IpoSignal::convictionTier));
+
         StringBuilder sb = new StringBuilder();
         sb.append("*Past IPO Strategy Signals*\n");
-        sb.append("------------------------\n");
+        sb.append("━━━━━━━━━━━━━━━━━━━━━━━\n");
         sb.append("Universe: last ").append(IPO_UNIVERSE_DAYS).append(" days")
                 .append(" | Scanned: ").append(total - skipped)
                 .append(" | Skipped: ").append(skipped).append("\n\n");
 
-        for (IpoSignal signal : signals) {
-            sb.append("*").append(signal.type()).append("*\n");
-            sb.append("`").append(signal.symbol()).append("` - ").append(signal.name()).append("\n");
-            sb.append("Close: ").append(fmt(signal.close()))
-                    .append(" | Change: ").append(signed(signal.changePct())).append("%\n");
-            sb.append("Range: ").append(fmt(signal.rangeLow()))
-                    .append(" - ").append(fmt(signal.rangeHigh())).append("\n");
-            sb.append(signal.reason()).append("\n\n");
+        // Display signals grouped by tier (1 to 4)
+        for (int tier = 1; tier <= 4; tier++) {
+            List<IpoSignal> tierSignals = signalsByTier.getOrDefault(tier, new ArrayList<>());
+            if (tierSignals.isEmpty()) {
+                continue;
+            }
+
+            String tierStars = "⭐".repeat(tier);
+            String tierLabel = switch (tier) {
+                case 1 -> "HIGHEST CONVICTION";
+                case 2 -> "HIGH CONVICTION";
+                case 3 -> "MEDIUM CONVICTION";
+                case 4 -> "LOW CONVICTION";
+                default -> "";
+            };
+
+            sb.append("*").append(tierStars).append(" TIER ").append(tier).append(" - ")
+                    .append(tierLabel).append("*\n");
+            sb.append("━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+            for (IpoSignal signal : tierSignals) {
+                sb.append("`").append(signal.symbol()).append("` - ").append(signal.name()).append("\n");
+                sb.append(signal.getTypeEmoji()).append(" ").append(signal.type())
+                        .append(" | ").append(signal.getGainEmoji()).append(" ").append(signal.gainCategory())
+                        .append(" | ").append(signal.getBodyEmoji()).append(" ")
+                        .append(String.format("%.0f%%", signal.bodyPercentage())).append("\n");
+                sb.append("Close: ").append(fmt(signal.close()))
+                        .append(" | Change: ").append(signed(signal.changePct())).append("%\n");
+                sb.append("10-Day High: ").append(fmt(signal.previous10DaysHigh()))
+                        .append(" | ").append(signal.getMomentumEmoji()).append(" ")
+                        .append(signal.getMomentumIndicator()).append("\n");
+                sb.append("Range: ").append(fmt(signal.rangeLow()))
+                        .append(" - ").append(fmt(signal.rangeHigh())).append("\n\n");
+            }
         }
 
         return sb.toString();
@@ -311,17 +425,6 @@ public class IpoStrategyMonitorService {
 
     private record WeeklyBar(LocalDate weekStart, double open, double high, double low, double close, long volume) {}
 
-    private record IpoSignal(
-            String name,
-            String symbol,
-            String type,
-            int priority,
-            double close,
-            double rangeHigh,
-            double rangeLow,
-            double changePct,
-            String reason
-    ) {}
 
     private static class WeeklyAccumulator {
         private final LocalDate weekStart;

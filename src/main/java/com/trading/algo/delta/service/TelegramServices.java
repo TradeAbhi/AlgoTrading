@@ -32,7 +32,7 @@ public class TelegramServices {
     @Value("${telegram.delta.bot.token}")
     private String botToken;
 
-    @Value("${telegram.delta.chat.id}")
+    @Value("${telegram.chat.id}")
     private String chatId;
 
     private final OkHttpClient httpClient;

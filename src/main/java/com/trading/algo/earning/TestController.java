@@ -39,8 +39,8 @@ public class TestController {
 	private final EarningsRepository repo;
 	private final TelegramService telegramService;
 	private final MarketSentimentService marketSentimentService;
-
-private final GlobalMarketService globalMarketService;
+	private final GlobalMarketService globalMarketService;
+	private final EarningsWindowFiboService earningsWindowFiboService;
 //    @GetMapping("/callback")
 //    public String handleCallback(@RequestParam String code) {
 //        return code;
@@ -175,5 +175,20 @@ public String testGlobal() {
 	public String weeklySummary() {
 		schedulerService.weeklySummaryAlert();
 		return "Weekly summary sent to Telegram.";
+	}
+
+	// Fetch historical earnings from NSE for a specific date range
+	@GetMapping("/test/historical-earnings")
+	public List<Earnings> getHistoricalEarnings(
+			@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+			@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+		return earningsService.fetchHistoricalEarnings(from, to);
+	}
+
+	// Trigger earnings window Fibonacci scan manually
+	@GetMapping("/test/earnings-window-fibo")
+	public String triggerEarningsWindowFibo() {
+		int count = earningsWindowFiboService.manualTrigger();
+		return "Earnings window Fibonacci scan complete. Found " + count + " setups. Check Telegram.";
 	}
 }

@@ -63,6 +63,13 @@ public class Ipo {
     @Column(name = "alert_listing_perf_sent")
     private Boolean alertListingPerfSent = false;  // EOD performance alert on listing day
 
+    // ── Listing Day Candle Analysis ───────────────────────────────────────────
+    @Column(name = "listing_body_pct")
+    private Double listingBodyPct;  // Body percentage of listing day candle: |close - open| / (high - low) * 100
+
+    @Column(name = "listing_momentum_pass")
+    private Boolean listingMomentumPass = false;  // Whether listing close shows strong momentum
+
     // ── Grey Market Premium (GMP) ────────────────────────────────────────────
     @Column(name = "gmp")
     private Double gmp;  // Grey Market Premium in percentage

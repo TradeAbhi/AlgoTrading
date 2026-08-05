@@ -27,14 +27,8 @@ public class WatchlistTelegramAlertService {
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
 
-    @Value("${telegram.bot.token}")
-    private String botToken;
-
-    @Value("${telegram.chat.id}")
-    private String chatId;
-
     private final WatchlistService watchlistService;
-    private final RestTemplate restTemplate;
+    private final TelegramService telegramService;
     private final Object snapshotLock = new Object();
     private Map<WatchlistCategory, Set<String>> previousCategorySymbols = Collections.emptyMap();
 
@@ -69,7 +63,7 @@ public class WatchlistTelegramAlertService {
             }
             
             String message = buildMessage(watchlist);
-            sendTelegramMessage(message);
+            telegramService.sendMessageToIntraday(message);
             log.info("Watchlist digest sent to Telegram successfully");
         } catch (Exception e) {
             log.error("Failed to send watchlist digest: {}", e.getMessage(), e);
@@ -269,23 +263,6 @@ public class WatchlistTelegramAlertService {
         return items.stream()
                 .map(WatchlistItem::getSymbol)
                 .collect(Collectors.toSet());
-    }
-
-    // -------------------------------------------------------------------------
-    // Telegram HTTP call
-    // -------------------------------------------------------------------------
-
-    public void sendTelegramMessage(String text) {
-        try {
-            String url = "https://api.telegram.org/bot" + botToken + "/sendMessage";
-            var payload = new java.util.HashMap<String, String>();
-            payload.put("chat_id", chatId);
-            payload.put("text", text);
-            payload.put("parse_mode", "Markdown");
-            restTemplate.postForObject(url, payload, String.class);
-        } catch (Exception e) {
-            log.error("Telegram sendMessage failed: {}", e.getMessage(), e);
-        }
     }
 }
 /**

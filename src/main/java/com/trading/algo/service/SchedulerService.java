@@ -40,6 +40,7 @@ public class SchedulerService {
     private final com.trading.algo.broker.CapAllocationAlertService capAllocationAlertService;
     private final com.trading.algo.orb.WatchlistOrbService watchlistOrbService;
     private final com.trading.algo.fibostrategy.WatchlistFiboService watchlistFiboService;
+    private final com.trading.algo.earning.EarningsWindowFiboService earningsWindowFiboService;
 
     // =========================================================================
     // EARNINGS — fetch & save (DO NOT TOUCH)
@@ -259,6 +260,16 @@ public class SchedulerService {
     // =========================================================================
     // Opening Candle Strategy — live market alert at 9:46 AM
     // =========================================================================
+
+    /**
+     * Runs every weekday at 9:46 AM IST — scans ALL Nifty F&O stocks (original logic).
+     * Includes index signals (Nifty 50, Bank Nifty, Fin Nifty).
+     */
+    @Scheduled(cron = "0 46 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void openingCandleStrategyFnoAlert() {
+        log.info("Opening Candle Strategy FNO scheduler fired — 9:46 AM");
+        liveStrategyAlertService.scanAndAlertFno();
+    }
 
     /**
      * Runs every weekday at 9:46 AM IST.
@@ -499,6 +510,16 @@ public class SchedulerService {
     public void watchlistFiboStrategy() {
         log.info("Watchlist Fibonacci strategy scheduler fired at 9:46 AM");
         watchlistFiboService.processWatchlistFibo();
+    }
+
+    /**
+     * Earnings Window Fibonacci strategy - runs once per day at 9:47 AM
+     * Applies Fibonacci strategy to stocks in earnings window (pre-10 to post-3 days)
+     */
+    @Scheduled(cron = "0 47 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void earningsWindowFiboStrategy() {
+        log.info("Earnings Window Fibonacci strategy scheduler fired at 9:47 AM");
+        earningsWindowFiboService.processEarningsWindowFibo();
     }
 
     /**

@@ -47,6 +47,9 @@ public class BacktestSummaryDTO {
      */
     private List<FilterDiagnostic> unavailableFilters;
 
+    /** Rejection breakdown: how many symbols were eliminated by each filter. */
+    private java.util.Map<String, Integer> rejectionStats;
+
     /** Top 10 symbols by total P&L */
     private List<SymbolStat> topSymbols;
 

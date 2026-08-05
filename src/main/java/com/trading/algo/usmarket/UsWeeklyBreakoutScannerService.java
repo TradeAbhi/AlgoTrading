@@ -15,8 +15,10 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -200,7 +202,10 @@ public class UsWeeklyBreakoutScannerService {
         }
 
         // Batch fetch daily candles — all active tickers in one pass
-        Map<String, List<UsCandle>> dailyBatch = marketDataService.fetchDailyBatch(activeTickers, 2);
+        // History is used only to label an already-confirmed breakout.
+        // It is not part of the breakout decision itself.
+        Map<String, List<UsCandle>> dailyBatch = marketDataService.fetchDailyBatch(activeTickers, 11);
+        Map<String, List<UsCandle>> weeklyBatch = marketDataService.fetchWeeklyBatch(activeTickers, 12);
 
         List<String> buyMessages  = new ArrayList<>();
         List<String> sellMessages = new ArrayList<>();
@@ -230,8 +235,9 @@ public class UsWeeklyBreakoutScannerService {
             if (!state.isBuyAlerted()) {
                 if (dClose > state.getWeeklyHigh() && currentWeeklyClose > state.getWeeklyHigh()) {
                         state.setWeeklyLow(state.getPrevDailyLow());
-                        String msg = buildBuyAlert(state, today);
-                        telegramService.sendMessage(msg);
+                        String msg = buildBuyAlert(state, today, daily,
+                                weeklyBatch.getOrDefault(ticker, Collections.emptyList()));
+                        telegramService.sendMessageToUs(msg);
                         buyMessages.add(msg);
                         state.setBuyAlerted(true);
                         buyFired++;
@@ -244,7 +250,7 @@ public class UsWeeklyBreakoutScannerService {
                 if (dClose < state.getWeeklyLow()) {
                         state.setWeeklyHigh(state.getPrevDailyHigh());
                         String msg = buildSellAlert(state, today);
-                        telegramService.sendMessage(msg);
+                        telegramService.sendMessageToUs(msg);
                         sellMessages.add(msg);
                         state.setSellAlerted(true);
                         sellFired++;
@@ -293,8 +299,10 @@ public class UsWeeklyBreakoutScannerService {
             if (!s.isBuyAlerted() || !s.isSellAlerted()) activeTickers.add(s.getTicker());
         }
 
-        // Batch fetch 7 daily candles for all tickers in one pass
-        Map<String, List<UsCandle>> dailyBatch = marketDataService.fetchDailyBatch(activeTickers, 7);
+        // History is used only to label an already-confirmed breakout.
+        // It is not part of the breakout decision itself.
+        Map<String, List<UsCandle>> dailyBatch = marketDataService.fetchDailyBatch(activeTickers, 11);
+        Map<String, List<UsCandle>> weeklyBatch = marketDataService.fetchWeeklyBatch(activeTickers, 12);
 
         List<String> buyMessages  = new ArrayList<>();
         List<String> sellMessages = new ArrayList<>();
@@ -329,8 +337,9 @@ public class UsWeeklyBreakoutScannerService {
                 if (!state.isBuyAlerted()) {
                     if (dClose > state.getWeeklyHigh() && currentWeeklyClose > state.getWeeklyHigh()) {
                         state.setWeeklyLow(state.getPrevDailyLow());
-                        String msg = buildBuyAlert(state, candle);
-                        telegramService.sendMessage(msg);
+                        String msg = buildBuyAlert(state, candle, daily,
+                                weeklyBatch.getOrDefault(ticker, Collections.emptyList()));
+                        telegramService.sendMessageToUs(msg);
                         buyMessages.add(msg);
                         state.setBuyAlerted(true);
                         totalBuy++;
@@ -343,7 +352,7 @@ public class UsWeeklyBreakoutScannerService {
                     if (dClose < state.getWeeklyLow()) {
                         state.setWeeklyHigh(state.getPrevDailyHigh());
                         String msg = buildSellAlert(state, candle);
-                        telegramService.sendMessage(msg);
+                        telegramService.sendMessageToUs(msg);
                         sellMessages.add(msg);
                         state.setSellAlerted(true);
                         totalSell++;
@@ -399,7 +408,8 @@ public class UsWeeklyBreakoutScannerService {
     }
 
     // ── Alert builders ────────────────────────────────────────────────────────
-    private String buildBuyAlert(UsWeeklyBreakoutState state, UsCandle candle) {
+    private String buildBuyAlert(UsWeeklyBreakoutState state, UsCandle candle,
+                                 List<UsCandle> dailyCandles, List<UsCandle> weeklyCandles) {
         double close     = candle.getClose();
         double slLevel   = state.getPrevDailyLow();
         double riskPct   = ((close - slLevel) / close) * 100.0;
@@ -412,7 +422,7 @@ public class UsWeeklyBreakoutScannerService {
                 state.getTicker(), close, state.getWeeklyHigh(), slLevel,
                 String.format("%.2f", riskPct));
 
-        return String.format(
+        String alert = String.format(
                 "🇺🇸🟢 *US WEEKLY BUY BREAKOUT*%n" +
                         "📌 *%s*%n" +
                         "────────────────%n" +
@@ -433,7 +443,53 @@ public class UsWeeklyBreakoutScannerService {
                 candle.getHigh(), candle.getLow(),
                 candle.getVolume(),
                 candle.getDate());
+        BreakoutClassification classification = classifyBreakout(candle, dailyCandles, weeklyCandles);
+        return alert + String.format("%n%nCategories: %s%nWeekly body: %.1f%%",
+                classification.labels(), classification.bodyPct());
     }
+
+    /**
+     * Presentation-only labels for an already-confirmed BUY breakout. These values
+     * never participate in the strategy's entry or state-transition logic.
+     */
+    private BreakoutClassification classifyBreakout(UsCandle breakoutCandle, List<UsCandle> dailyCandles,
+                                                    List<UsCandle> weeklyCandles) {
+        LocalDate signalDate = breakoutCandle.getDate();
+        LocalDate weekStart = signalDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+
+        List<UsCandle> completedWeeklyHistory = weeklyCandles.stream()
+                .filter(c -> c.getDate().isBefore(weekStart))
+                .sorted(Comparator.comparing(UsCandle::getDate))
+                .toList();
+        List<UsCandle> lastTenWeekly = completedWeeklyHistory.size() > 10
+                ? completedWeeklyHistory.subList(completedWeeklyHistory.size() - 10, completedWeeklyHistory.size())
+                : completedWeeklyHistory;
+        boolean hasTenWeeklyCandles = lastTenWeekly.size() == 10;
+        boolean momentumPass = hasTenWeeklyCandles
+                && lastTenWeekly.stream().allMatch(c -> breakoutCandle.getClose() > c.getClose());
+
+        List<UsCandle> currentWeek = dailyCandles.stream()
+                .filter(c -> !c.getDate().isBefore(weekStart) && !c.getDate().isAfter(signalDate))
+                .toList();
+        double weeklyOpen = currentWeek.isEmpty() ? breakoutCandle.getOpen() : currentWeek.get(0).getOpen();
+        double weeklyHigh = currentWeek.stream().mapToDouble(UsCandle::getHigh).max().orElse(breakoutCandle.getHigh());
+        double weeklyLow = currentWeek.stream().mapToDouble(UsCandle::getLow).min().orElse(breakoutCandle.getLow());
+        double weeklyRange = weeklyHigh - weeklyLow;
+        double bodyPct = weeklyRange > 0
+                ? Math.abs(breakoutCandle.getClose() - weeklyOpen) / weeklyRange * 100.0 : 0;
+        double weeklyGainPct = weeklyOpen > 0
+                ? (breakoutCandle.getClose() - weeklyOpen) / weeklyOpen * 100.0 : 0;
+
+        List<String> labels = new ArrayList<>();
+        labels.add(!hasTenWeeklyCandles
+                ? String.format("🗂️ Weekly History Unavailable (%d/10)", lastTenWeekly.size())
+                : momentumPass ? "⚡ Momentum Pass" : "⚠️ Momentum Fail");
+        labels.add(bodyPct >= 60.0 ? "💪 Strong Body" : "📉 Weak Body");
+        if (weeklyGainPct > 10.0) labels.add("🚀 Big Mover");
+        return new BreakoutClassification(String.join(" | ", labels), bodyPct);
+    }
+
+    private record BreakoutClassification(String labels, double bodyPct) {}
 
     private String buildSellAlert(UsWeeklyBreakoutState state, UsCandle candle) {
         double close     = candle.getClose();

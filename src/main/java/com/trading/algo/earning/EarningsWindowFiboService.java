@@ -1,11 +1,12 @@
-package com.trading.algo.fibostrategy;
+package com.trading.algo.earning;
 
 import com.trading.algo.config.BacktestConfig;
 import com.trading.algo.dtos.Candle;
 import com.trading.algo.entity.BacktestTrade;
-import com.trading.algo.entity.WatchlistAlert;
+import com.trading.algo.entity.Earnings;
+import com.trading.algo.fibostrategy.OpeningCandleStrategyService;
+import com.trading.algo.repo.EarningsRepository;
 import com.trading.algo.service.UniverseService;
-import com.trading.algo.service.WatchlistAlertService;
 import com.trading.algo.telegram.TelegramService;
 import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
@@ -26,25 +27,25 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
- * Fibonacci (Opening Candle) Strategy service for watchlist stocks.
+ * Fibonacci (Opening Candle) Strategy service for stocks in earnings window.
  * 
- * Runs once per day after the first watchlist alert is received.
- * Applies Fibonacci strategy only to stocks from the latest watchlist alert.
+ * Runs daily to apply Fibonacci strategy to stocks that are in the earnings window
+ * (pre-10 days to post-3 days around their earnings date).
  * 
- * Key differences from standard Fibonacci:
- * - Universe is limited to watchlist stocks (not momentum snapshot)
- * - Runs once per day (not every 15 minutes)
- * - Processes alerts as they come in
+ * Earnings window is a high-volatility period where Fibonacci strategies can be
+ * particularly effective due to increased volume and price movement.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class WatchlistFiboService {
+public class EarningsWindowFiboService {
 
     private static final LocalTime C1_TIME = LocalTime.of(9, 15);
     private static final LocalTime C2_TIME = LocalTime.of(9, 30);
+    private static final int PRE_EARNINGS_DAYS = 10;
+    private static final int POST_EARNINGS_DAYS = 3;
 
-    private final WatchlistAlertService watchlistAlertService;
+    private final EarningsRepository earningsRepository;
     private final UpstoxHistoricalCandleService candleService;
     private final UpstoxInstrumentMasterService instrumentMaster;
     private final OpeningCandleStrategyService strategy;
@@ -52,40 +53,45 @@ public class WatchlistFiboService {
     private final BacktestConfig config;
 
     /**
-     * Main entry point - called by scheduler once per day
+     * Main entry point - called by scheduler daily
      */
-    public int processWatchlistFibo() {
+    public int processEarningsWindowFibo() {
         LocalDate today = LocalDate.now();
-        log.info("Watchlist Fibonacci scan START — date={}", today);
+        log.info("Earnings Window Fibonacci scan START — date={}", today);
 
-        // Get the latest unprocessed watchlist alert
-        WatchlistAlert alert = watchlistAlertService.getLatestUnprocessedFiboAlert();
-        if (alert == null) {
-            log.debug("No unprocessed watchlist alert for Fibonacci");
+        // Calculate earnings window: today - 10 days to today + 3 days
+        LocalDate windowStart = today.minusDays(PRE_EARNINGS_DAYS);
+        LocalDate windowEnd = today.plusDays(POST_EARNINGS_DAYS);
+
+        log.info("Earnings window: {} to {}", windowStart, windowEnd);
+
+        // Get symbols with earnings in the window
+        List<String> earningsSymbols = earningsRepository.findSymbolsInEarningsWindow(windowStart, windowEnd);
+
+        if (earningsSymbols.isEmpty()) {
+            log.info("No symbols in earnings window");
             return 0;
         }
 
-        log.info("Processing Fibonacci for watchlist alert {} with {} symbols", 
-                alert.getId(), alert.getTotalSymbols());
+        log.info("Found {} symbols in earnings window", earningsSymbols.size());
 
         // Filter to F&O symbols only
-        List<String> fnoSymbols = alert.getSymbols().stream()
+        List<String> fnoSymbols = earningsSymbols.stream()
                 .filter(UniverseService.NIFTY_FNO_SYMBOLS::contains)
                 .distinct()
                 .collect(Collectors.toList());
 
         if (fnoSymbols.isEmpty()) {
-            log.warn("No F&O symbols in watchlist alert");
-            watchlistAlertService.markFiboProcessed(alert.getId());
+            log.warn("No F&O symbols in earnings window");
             return 0;
         }
 
-        log.info("Filtered to {} F&O symbols from watchlist", fnoSymbols.size());
+        log.info("Filtered to {} F&O symbols in earnings window", fnoSymbols.size());
 
         // Resolve symbols to instrument keys
         Map<String, String> symbolKeyMap = instrumentMaster.resolveToInstrumentKeyMap(fnoSymbols);
 
-        log.info("Scanning {} watchlist symbols for Fibonacci setups", symbolKeyMap.size());
+        log.info("Scanning {} earnings window symbols for Fibonacci setups", symbolKeyMap.size());
 
         // Thread-safe list to collect all valid setups found
         CopyOnWriteArrayList<BacktestTrade> signals = new CopyOnWriteArrayList<>();
@@ -107,17 +113,14 @@ public class WatchlistFiboService {
             catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
 
-        log.info("Watchlist Fibonacci scan COMPLETE — {} setups found", signals.size());
-
-        // Mark alert as processed
-        watchlistAlertService.markFiboProcessed(alert.getId());
+        log.info("Earnings Window Fibonacci scan COMPLETE — {} setups found", signals.size());
 
         if (signals.isEmpty()) {
-            log.info("No Fibonacci setups found in watchlist");
+            log.info("No Fibonacci setups found in earnings window");
             return 0;
         }
 
-        sendTelegramAlert(signals, today);
+        sendTelegramAlert(signals, today, windowStart, windowEnd);
         return signals.size();
     }
 
@@ -131,7 +134,7 @@ public class WatchlistFiboService {
             List<Candle> candles = candleService.fetchDayCandles(instrumentKey, today);
 
             if (candles.isEmpty()) {
-                log.debug("Watchlist Fibo: {} — no candles today", symbol);
+                log.debug("Earnings Window Fibo: {} — no candles today", symbol);
                 return;
             }
 
@@ -142,7 +145,7 @@ public class WatchlistFiboService {
                     .anyMatch(c -> c.getTimestamp().toLocalTime().equals(C2_TIME));
 
             if (!hasC1 || !hasC2) {
-                log.debug("Watchlist Fibo: {} — C1 or C2 candle not yet available", symbol);
+                log.debug("Earnings Window Fibo: {} — C1 or C2 candle not yet available", symbol);
                 return;
             }
 
@@ -151,7 +154,7 @@ public class WatchlistFiboService {
 
             if (trade.isPresent()) {
                 signals.add(trade.get());
-                log.info("  🔔 WATCHLIST FIBO SIGNAL: {} {} Entry={} SL={} Target={}",
+                log.info("  🔔 EARNINGS WINDOW FIBO SIGNAL: {} {} Entry={} SL={} Target={}",
                         symbol,
                         trade.get().getDirection(),
                         String.format("%.2f", trade.get().getEntryPrice()),
@@ -160,14 +163,15 @@ public class WatchlistFiboService {
             }
 
         } catch (Exception e) {
-            log.error("Watchlist Fibo scan error for {}: {}", symbol, e.getMessage());
+            log.error("Earnings Window Fibo scan error for {}: {}", symbol, e.getMessage());
         }
     }
 
     /**
-     * Send Telegram alert with Fibonacci setups
+     * Send Telegram alert with Fibonacci setups for earnings window stocks
      */
-    private void sendTelegramAlert(List<BacktestTrade> signals, LocalDate today) {
+    private void sendTelegramAlert(List<BacktestTrade> signals, LocalDate today,
+                                    LocalDate windowStart, LocalDate windowEnd) {
         // Split BUY into gap-down BUY and regular BUY
         List<BacktestTrade> gapDownBuys = signals.stream()
                 .filter(s -> s.getDirection() == BacktestTrade.Direction.BUY && Boolean.TRUE.equals(s.getC1AbovePrevHigh()))
@@ -191,11 +195,12 @@ public class WatchlistFiboService {
                 .collect(Collectors.toList());
 
         StringBuilder sb = new StringBuilder();
-        sb.append("📊 *Watchlist Fibonacci Strategy*\n");
+        sb.append("📊 *Earnings Window Fibonacci Strategy*\n");
         sb.append("📅 ").append(today).append("\n");
+        sb.append("🎯 Window: ").append(windowStart).append(" to ").append(windowEnd).append("\n");
         sb.append("━━━━━━━━━━━━━━━━━━━━\n\n");
 
-        // Gap-down BUY setups (9:46 alert category)
+        // Gap-down BUY setups
         if (!gapDownBuys.isEmpty()) {
             sb.append("🟢 *Gap Down BUY Setups* (").append(gapDownBuys.size()).append(")\n");
             for (BacktestTrade t : gapDownBuys) {
@@ -213,7 +218,7 @@ public class WatchlistFiboService {
             sb.append("\n");
         }
 
-        // Gap-up SELL setups (9:46 alert category)
+        // Gap-up SELL setups
         if (!gapUpSells.isEmpty()) {
             sb.append("🔴 *Gap Up SELL Setups* (").append(gapUpSells.size()).append(")\n");
             for (BacktestTrade t : gapUpSells) {
@@ -236,7 +241,7 @@ public class WatchlistFiboService {
         sb.append(" | SL at 3:15 PM if not triggered");
 
         telegramService.sendMessage(sb.toString());
-        log.info("Watchlist Fibonacci alert sent — {} setups", signals.size());
+        log.info("Earnings Window Fibonacci alert sent — {} setups", signals.size());
     }
 
     private String formatSignal(BacktestTrade t) {
@@ -264,6 +269,6 @@ public class WatchlistFiboService {
      * Manual trigger for testing
      */
     public int manualTrigger() {
-        return processWatchlistFibo();
+        return processEarningsWindowFibo();
     }
 }

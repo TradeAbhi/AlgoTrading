@@ -64,6 +64,10 @@ public class BacktestTrade {
     private double pnlPercent;     // pnlPoints / entryPrice * 100
     private double actualRR;       // pnlPoints / riskPoints
 
+    /** Latest intraday price change from the 9:15 opening price; used only to rank live scan alerts. */
+    @Transient
+    private double signalPriceChangePercent;
+
     /**
      * Quantity calculated from fixed risk:
      *   quantity = floor(fixedRiskRupees / riskPoints)
@@ -107,6 +111,9 @@ public class BacktestTrade {
     private LocalDateTime exitCandleTime;
 
     // ── Previous day OHLC ───────────────────────────────────────────────────
+    @Column(name = "prev_day_open", columnDefinition = "DECIMAL(10,2)")
+    private Double prevDayOpen;
+
     @Column(name = "prev_day_high", columnDefinition = "DECIMAL(10,2)")
     private Double prevDayHigh;
 
@@ -115,6 +122,32 @@ public class BacktestTrade {
 
     @Column(name = "prev_day_close", columnDefinition = "DECIMAL(10,2)")
     private Double prevDayClose;
+
+    // ── C3 candle (first candle closing above C2 high on BUY / below C2 low on SELL) ──
+    @Column(name = "c3_open", columnDefinition = "DECIMAL(10,2)")
+    private Double c3Open;
+
+    @Column(name = "c3_high", columnDefinition = "DECIMAL(10,2)")
+    private Double c3High;
+
+    @Column(name = "c3_low", columnDefinition = "DECIMAL(10,2)")
+    private Double c3Low;
+
+    @Column(name = "c3_close", columnDefinition = "DECIMAL(10,2)")
+    private Double c3Close;
+
+    // ── Gap flags (replaced by prev-day level categories) ───────────────────────
+    // gapUp and gapDown removed — replaced by c1AbovePrevHigh / c1AbovePrevLow
+
+    /** BUY: true if C1 open > previous day high. SELL: not used. */
+    @Column(name = "c1_above_prev_high")
+    @Builder.Default
+    private Boolean c1AbovePrevHigh = false;
+
+    /** SELL: true if C1 open > previous day low. BUY: not used. */
+    @Column(name = "c1_above_prev_low")
+    @Builder.Default
+    private Boolean c1AbovePrevLow = false;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

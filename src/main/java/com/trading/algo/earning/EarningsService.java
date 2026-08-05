@@ -100,6 +100,95 @@ public class EarningsService {
             e.printStackTrace();
         }
     }
+
+    /**
+     * Fetch historical earnings from NSE for a specific date range.
+     * This can be used to get past earnings dates for stocks.
+     * 
+     * @param fromDate Start date for historical earnings
+     * @param toDate End date for historical earnings
+     * @return List of Earnings records fetched from NSE
+     */
+    public List<Earnings> fetchHistoricalEarnings(LocalDate fromDate, LocalDate toDate) {
+        List<Earnings> historicalEarnings = new ArrayList<>();
+        try {
+            CookieStore cookieStore = new BasicCookieStore();
+            CloseableHttpClient httpClient = HttpClients.custom()
+                    .setDefaultCookieStore(cookieStore)
+                    .build();
+
+            // Step 1: Hit homepage to get session cookies
+            HttpGet homepageRequest = new HttpGet("https://www.nseindia.com");
+            homepageRequest.setHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            homepageRequest.setHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            homepageRequest.setHeader("Accept-Language", "en-US,en;q=0.5");
+            homepageRequest.setHeader("Connection", "keep-alive");
+            httpClient.execute(homepageRequest, response -> null);
+
+            Thread.sleep(2000);
+
+            // Step 2: Fetch corporate announcements with date range
+            // NSE corporate-announcements API supports date filtering
+            DateTimeFormatter urlFmt = DateTimeFormatter.ofPattern("dd-MM-yyyy");
+            String url = String.format("https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=%s&to_date=%s",
+                    fromDate.format(urlFmt), toDate.format(urlFmt));
+            
+            HttpGet apiRequest = new HttpGet(url);
+            apiRequest.setHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            apiRequest.setHeader("Accept", "application/json, text/plain, */*");
+            apiRequest.setHeader("Accept-Language", "en-US,en;q=0.5");
+            apiRequest.setHeader("Referer", "https://www.nseindia.com/");
+            apiRequest.setHeader("X-Requested-With", "XMLHttpRequest");
+            apiRequest.setHeader("Connection", "keep-alive");
+
+            String responseBody = httpClient.execute(apiRequest, r -> EntityUtils.toString(r.getEntity()));
+
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(responseBody);
+
+            DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd-MMM-yyyy");
+
+            for (JsonNode node : root) {
+                // Filter for earnings-related announcements
+                String subject = node.has("subject") ? node.get("subject").asText() : "";
+                String desc = node.has("desc") ? node.get("desc").asText() : "";
+                
+                if (subject.toLowerCase().contains("financial results") ||
+                    subject.toLowerCase().contains("quarterly results") ||
+                    subject.toLowerCase().contains("earnings") ||
+                    desc.toLowerCase().contains("financial results") ||
+                    desc.toLowerCase().contains("quarterly results")) {
+                    
+                    if (node.get("symbol") == null || node.get("sm_name") == null ||
+                        node.get("bm_date") == null) continue;
+
+                    String symbol = node.get("symbol").asText();
+                    String company = node.get("sm_name").asText();
+                    String dateStr = node.get("bm_date").asText();
+
+                    if (dateStr.isBlank() || dateStr.equals("null")) continue;
+
+                    LocalDate eventDate;
+                    try {
+                        eventDate = LocalDate.parse(dateStr, fmt);
+                    } catch (Exception ex) {
+                        System.err.println("Skipping bad date for " + symbol + ": " + dateStr);
+                        continue;
+                    }
+
+                    String eventType = subject.contains("Quarterly") ? "Quarterly Results" : "Financial Results";
+                    historicalEarnings.add(new Earnings(null, symbol, company, eventDate, eventType, false, false, false));
+                }
+            }
+
+            httpClient.close();
+            System.out.println("Fetched " + historicalEarnings.size() + " historical earnings records from " + fromDate + " to " + toDate);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return historicalEarnings;
+    }
 }
 
 //Step 3: Hit the actual API with cookies now set

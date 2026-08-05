@@ -57,7 +57,56 @@ public class LiveStrategyAlertService {
     private final MarketSentimentService        marketSentimentService;
 
     // =========================================================================
-    // Main entry point — called by scheduler at 9:46 and by manual endpoint
+    // FNO universe scan — scans ALL Nifty F&O stocks (original logic)
+    // =========================================================================
+
+    public int scanAndAlertFno() {
+        LocalDate today = LocalDate.now();
+        log.info("LiveStrategyAlert FNO START — date={}", today);
+
+        Map<String, String> symbolKeyMap = instrumentMaster
+                .resolveToInstrumentKeyMap(UniverseService.NIFTY_FNO_SYMBOLS);
+
+        log.info("Scanning {} F&O symbols for live strategy setups", symbolKeyMap.size());
+
+        CopyOnWriteArrayList<BacktestTrade> signals = new CopyOnWriteArrayList<>();
+        ExecutorService pool = Executors.newFixedThreadPool(config.getThreadPoolSize());
+
+        try {
+            List<CompletableFuture<Void>> futures = symbolKeyMap.entrySet().stream()
+                    .map(entry -> CompletableFuture.runAsync(() ->
+                            scanSymbol(entry.getKey(), entry.getValue(), today, signals), pool))
+                    .collect(Collectors.toList());
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        } finally {
+            pool.shutdown();
+            try { pool.awaitTermination(5, TimeUnit.MINUTES); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+
+        log.info("FNO stock scan COMPLETE — {} setups found", signals.size());
+
+        List<BacktestTrade> indexSignals = scanIndexes(today);
+
+        log.info("LiveStrategyAlert FNO COMPLETE — stocks={} indexes={}",
+                signals.size(), indexSignals.size());
+
+        if (signals.isEmpty() && indexSignals.isEmpty()) {
+            telegramService.sendMessage(
+                "📊 *Opening Candle Strategy — 9:46 AM Scan*\n" +
+                "━━━━━━━━━━━━━━━━━━━━\n" +
+                "_No valid setups found today._\n" +
+                "Date: " + today
+            );
+            return 0;
+        }
+
+        sendTelegramAlert(signals, indexSignals, today);
+        return signals.size() + indexSignals.size();
+    }
+
+    // =========================================================================
+    // Momentum snapshot scan — called by scheduler at 9:46 and by manual endpoint
     // =========================================================================
 
     public int scanAndAlert() {
@@ -194,7 +243,6 @@ public class LiveStrategyAlertService {
     private void scanSymbol(String symbol, String instrumentKey, LocalDate today,
                              CopyOnWriteArrayList<BacktestTrade> signals) {
         try {
-            // Fetch today's 15-min candles — same API as backtest, just with today's date
             List<Candle> candles = candleService.fetchDayCandles(instrumentKey, today);
 
             if (candles.isEmpty()) {
@@ -202,7 +250,6 @@ public class LiveStrategyAlertService {
                 return;
             }
 
-            // Verify we have at least C1 (9:15) and C2 (9:30) candles
             boolean hasC1 = candles.stream()
                     .anyMatch(c -> c.getTimestamp().toLocalTime().equals(C1_TIME));
             boolean hasC2 = candles.stream()
@@ -213,8 +260,16 @@ public class LiveStrategyAlertService {
                 return;
             }
 
-            // Run the exact same strategy logic as backtest
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, today, candles);
+            // Fetch previous day OHLC for categorization
+            List<Candle> prevDay = candleService.fetchDailyCandles(instrumentKey, today.minusDays(3), today.minusDays(1));
+            Double prevDayHigh  = prevDay.isEmpty() ? null : prevDay.get(prevDay.size() - 1).getHigh();
+            Double prevDayLow   = prevDay.isEmpty() ? null : prevDay.get(prevDay.size() - 1).getLow();
+            Double prevDayClose = prevDay.isEmpty() ? null : prevDay.get(prevDay.size() - 1).getClose();
+            Double prevDayOpen  = prevDay.isEmpty() ? null : prevDay.get(prevDay.size() - 1).getOpen();
+
+            Optional<BacktestTrade> trade = strategy.evaluate(symbol, today, candles, -1.0, 0.0, 0,
+                    config.getFixedRiskRupees(), prevDayOpen, prevDayHigh, prevDayLow, prevDayClose,
+                    0.0, 0.0, 0.0, 0.0);
 
             if (trade.isPresent()) {
                 signals.add(trade.get());
@@ -236,14 +291,23 @@ public class LiveStrategyAlertService {
     // =========================================================================
 
     private void sendTelegramAlert(List<BacktestTrade> signals, List<BacktestTrade> indexSignals, LocalDate today) {
-        // Split into BUY and SELL
-        List<BacktestTrade> buys = signals.stream()
-                .filter(s -> s.getDirection() == Direction.BUY)
+        // BUY: above prev day high vs below prev day high
+        List<BacktestTrade> buyAbovePrevHigh = signals.stream()
+                .filter(s -> s.getDirection() == Direction.BUY && Boolean.TRUE.equals(s.getC1AbovePrevHigh()))
+                .sorted((a, b) -> Double.compare(b.getC1WickRatio(), a.getC1WickRatio()))
+                .collect(Collectors.toList());
+        List<BacktestTrade> buyBelowPrevHigh = signals.stream()
+                .filter(s -> s.getDirection() == Direction.BUY && !Boolean.TRUE.equals(s.getC1AbovePrevHigh()))
                 .sorted((a, b) -> Double.compare(b.getC1WickRatio(), a.getC1WickRatio()))
                 .collect(Collectors.toList());
 
-        List<BacktestTrade> sells = signals.stream()
-                .filter(s -> s.getDirection() == Direction.SELL)
+        // SELL: above prev day low vs below prev day low
+        List<BacktestTrade> sellAbovePrevLow = signals.stream()
+                .filter(s -> s.getDirection() == Direction.SELL && Boolean.TRUE.equals(s.getC1AbovePrevLow()))
+                .sorted((a, b) -> Double.compare(b.getC1WickRatio(), a.getC1WickRatio()))
+                .collect(Collectors.toList());
+        List<BacktestTrade> sellBelowPrevLow = signals.stream()
+                .filter(s -> s.getDirection() == Direction.SELL && !Boolean.TRUE.equals(s.getC1AbovePrevLow()))
                 .sorted((a, b) -> Double.compare(b.getC1WickRatio(), a.getC1WickRatio()))
                 .collect(Collectors.toList());
 
@@ -252,31 +316,31 @@ public class LiveStrategyAlertService {
         sb.append("📅 ").append(today).append("\n");
         sb.append("━━━━━━━━━━━━━━━━━━━━\n\n");
 
-        // BUY setups
-        if (!buys.isEmpty()) {
-            sb.append("🟢 *BUY Setups* (").append(buys.size()).append(")\n");
-            for (BacktestTrade t : buys) {
-                sb.append(formatSignal(t));
-            }
+        if (!buyAbovePrevHigh.isEmpty()) {
+            sb.append("🟢 *BUY — Above Prev Day High* (").append(buyAbovePrevHigh.size()).append(")\n");
+            for (BacktestTrade t : buyAbovePrevHigh) sb.append(formatSignal(t));
+            sb.append("\n");
+        }
+        if (!buyBelowPrevHigh.isEmpty()) {
+            sb.append("🟢 *BUY — Below Prev Day High* (").append(buyBelowPrevHigh.size()).append(")\n");
+            for (BacktestTrade t : buyBelowPrevHigh) sb.append(formatSignal(t));
+            sb.append("\n");
+        }
+        if (!sellAbovePrevLow.isEmpty()) {
+            sb.append("🔴 *SELL — Above Prev Day Low* (").append(sellAbovePrevLow.size()).append(")\n");
+            for (BacktestTrade t : sellAbovePrevLow) sb.append(formatSignal(t));
+            sb.append("\n");
+        }
+        if (!sellBelowPrevLow.isEmpty()) {
+            sb.append("🔴 *SELL — Below Prev Day Low* (").append(sellBelowPrevLow.size()).append(")\n");
+            for (BacktestTrade t : sellBelowPrevLow) sb.append(formatSignal(t));
             sb.append("\n");
         }
 
-        // SELL setups
-        if (!sells.isEmpty()) {
-            sb.append("🔴 *SELL Setups* (").append(sells.size()).append(")\n");
-            for (BacktestTrade t : sells) {
-                sb.append(formatSignal(t));
-            }
-            sb.append("\n");
-        }
-
-        // Index setups — Nifty 50, Bank Nifty, Fin Nifty
         if (!indexSignals.isEmpty()) {
             sb.append("━━━━━━━━━━━━━━━━━━━━\n\n");
             sb.append("📈 *Index Setups* (").append(indexSignals.size()).append(")\n");
-            for (BacktestTrade t : indexSignals) {
-                sb.append(formatSignal(t));
-            }
+            for (BacktestTrade t : indexSignals) sb.append(formatSignal(t));
             sb.append("\n");
         }
 
@@ -286,8 +350,7 @@ public class LiveStrategyAlertService {
           .append(" | SL at 3:15 PM if not triggered");
 
         telegramService.sendMessage(sb.toString());
-        log.info("Live strategy alert sent — stocks={} indexes={}", 
-                signals.size(), indexSignals.size());
+        log.info("Live strategy alert sent — stocks={} indexes={}", signals.size(), indexSignals.size());
     }
 
     private double fetchAdRatio() {

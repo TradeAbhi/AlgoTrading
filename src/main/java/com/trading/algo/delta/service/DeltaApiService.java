@@ -19,6 +19,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
@@ -164,7 +165,6 @@ public class DeltaApiService {
     private List<Candle> parseCandles(String symbol, String json) {
         return parseCandles(symbol, json, CANDLE_15M_SEC);
     }
-
     private List<Candle> parseCandles(String symbol, String json, int candleDurationSec) {
         List<Candle> candles = new ArrayList<>();
         long nowEpoch = Instant.now().getEpochSecond();
@@ -203,6 +203,50 @@ public class DeltaApiService {
             log.error("Failed to parse candles for {}: {}", symbol, e.getMessage(), e);
         }
 
+        // Delta's API returns candles newest-first; enforce ascending order
+        // so every downstream consumer can safely assume chronological order.
+        candles.sort(Comparator.comparing(Candle::getOpenTime));
+
         return candles;
     }
+//    private List<Candle> parseCandles(String symbol, String json, int candleDurationSec) {
+//        List<Candle> candles = new ArrayList<>();
+//        long nowEpoch = Instant.now().getEpochSecond();
+//
+//        try {
+//            JsonNode root = objectMapper.readTree(json);
+//
+//            if (!root.path("success").asBoolean(false)) {
+//                log.warn("Delta API returned success=false for symbol {}: {}", symbol, json);
+//                return candles;
+//            }
+//
+//            JsonNode results = root.path("result");
+//            if (results.isArray()) {
+//                for (JsonNode node : results) {
+//                    long   openEpoch  = node.path("time").asLong();
+//                    long   closeEpoch = openEpoch + candleDurationSec;
+//                    boolean isClosed  = closeEpoch <= nowEpoch;
+//
+//                    Candle candle = Candle.builder()
+//                            .symbol(symbol)
+//                            .openTime(Instant.ofEpochSecond(openEpoch))
+//                            .closeTime(Instant.ofEpochSecond(closeEpoch))
+//                            .open(new BigDecimal(node.path("open").asText("0")))
+//                            .high(new BigDecimal(node.path("high").asText("0")))
+//                            .low(new BigDecimal(node.path("low").asText("0")))
+//                            .close(new BigDecimal(node.path("close").asText("0")))
+//                            .volume(new BigDecimal(node.path("volume").asText("0")))
+//                            .closed(isClosed)
+//                            .build();
+//
+//                    candles.add(candle);
+//                }
+//            }
+//        } catch (Exception e) {
+//            log.error("Failed to parse candles for {}: {}", symbol, e.getMessage(), e);
+//        }
+//
+//        return candles;
+//    }
 }

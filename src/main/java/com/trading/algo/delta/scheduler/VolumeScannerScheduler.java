@@ -18,16 +18,16 @@ public class VolumeScannerScheduler {
     private final List<String>         monitoredSymbols;
 
     /** Runs at :00, :15, :30, :45 of every hour — same cadence as AlertScheduler */
-    @Scheduled(cron = "${alert.scheduler.cron}")
-    public void scanVolume() {
-        log.info("=== Volume scan started at {} ===", Instant.now());
-        for (String symbol : monitoredSymbols) {
-            try {
-                volumeScannerService.scan(symbol);
-            } catch (Exception e) {
-                log.error("Volume scan error for {}: {}", symbol, e.getMessage(), e);
-            }
-        }
-        log.info("=== Volume scan completed ===");
-    }
+//    @Scheduled(cron = "${alert.scheduler.cron}")
+//    public void scanVolume() {
+//        log.info("=== Volume scan started at {} ===", Instant.now());
+//        for (String symbol : monitoredSymbols) {
+//            try {
+//                volumeScannerService.scan(symbol);
+//            } catch (Exception e) {
+//                log.error("Volume scan error for {}: {}", symbol, e.getMessage(), e);
+//            }
+//        }
+//        log.info("=== Volume scan completed ===");
+//    }
 }

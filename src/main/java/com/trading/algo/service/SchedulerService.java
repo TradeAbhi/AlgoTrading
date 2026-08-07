@@ -7,6 +7,7 @@ import com.trading.algo.entity.Earnings;
 import com.trading.algo.entity.EarningsWatchlist;
 import com.trading.algo.entity.EarningsWatchlist.WatchPhase;
 import com.trading.algo.fibostrategy.LiveStrategyAlertService;
+import com.trading.algo.gapbreakout.GapBreakoutService;
 import com.trading.algo.ipo.IpoRepository;
 import com.trading.algo.repo.EarningsRepository;
 import com.trading.algo.repo.EarningsWatchlistRepository;
@@ -41,6 +42,7 @@ public class SchedulerService {
     private final com.trading.algo.orb.WatchlistOrbService watchlistOrbService;
     private final com.trading.algo.fibostrategy.WatchlistFiboService watchlistFiboService;
     private final com.trading.algo.earning.EarningsWindowFiboService earningsWindowFiboService;
+    private final GapBreakoutService gapBreakoutService;
 
     // =========================================================================
     // EARNINGS — fetch & save (DO NOT TOUCH)
@@ -522,12 +524,41 @@ public class SchedulerService {
         earningsWindowFiboService.processEarningsWindowFibo();
     }
 
-    /**
-     * Clear watchlist ORB state at end of day (3:30 PM)
-     */
-    @Scheduled(cron = "0 30 15 * * MON-FRI", zone = "Asia/Kolkata")
-    public void clearWatchlistOrbState() {
-        log.info("Clearing watchlist ORB state at 3:30 PM");
-        watchlistOrbService.clearState();
-    }
+     /**
+      * Clear watchlist ORB state at end of day (3:30 PM)
+      */
+     @Scheduled(cron = "0 30 15 * * MON-FRI", zone = "Asia/Kolkata")
+     public void clearWatchlistOrbState() {
+         log.info("Clearing watchlist ORB state at 3:30 PM");
+         watchlistOrbService.clearState();
+     }
+
+     // =========================================================================
+     // GAP BREAKOUT STRATEGY — every 15 minutes from 9:15 AM to 3:30 PM
+     // =========================================================================
+
+     /**
+      * Gap Breakout strategy - runs every 15 minutes during market hours
+      * Scans F&O stocks for gap 0.45% + first 15m candle breakout signals
+      * Sends Telegram alerts for both LONG (gap up) and SHORT (gap down) setups
+      * Runs: 9:15, 9:30, 9:45, 10:00, 10:15, ..., 15:15, 15:30
+      */
+     @Scheduled(cron = "0 0/15 9-15 * * MON-FRI", zone = "Asia/Kolkata")
+     public void gapBreakoutStrategyScanner() {
+         java.time.LocalTime now = java.time.LocalTime.now();
+         // Only run between 9:15 AM and 3:30 PM
+         if (now.isBefore(java.time.LocalTime.of(9, 15)) ||
+             now.isAfter(java.time.LocalTime.of(15, 31))) {
+             return;
+         }
+         log.info("Gap Breakout strategy scanner fired at {}", now);
+         try {
+             int alerts = gapBreakoutService.scanAndAlert();
+             if (alerts > 0) {
+                 log.info("Gap Breakout: {} new alerts sent at {}", alerts, now);
+             }
+         } catch (Exception e) {
+             log.error("Gap Breakout scanner error at {}: {}", now, e.getMessage(), e);
+         }
+     }
 }

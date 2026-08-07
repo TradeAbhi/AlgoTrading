@@ -13,25 +13,43 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
- * Backtest engine for Crypto Consolidation Breakout strategy.
+ * Backtest engine for Crypto Consolidation Breakout strategy — v2.
  *
- * Strategy Logic:
- * 1. Identify 8-day consolidation zones (price coiling within a range)
- * 2. Entry when price closes above/below consolidation zone
- * 3. SL is placed below the preceding candle's low (for bullish) or above preceding candle's high (for bearish)
- * 4. Target is 1:3 risk-reward ratio
- * 5. Exit at target, SL, or end of day
+ * Changes from v1 (root causes of 15.38% win rate at 1:3 R:R, well below the
+ * 25% breakeven threshold, are addressed below):
+ *
+ *  1. CONFIRMATION ENTRY — no longer enters on the breakout candle itself.
+ *     Waits for the NEXT candle to also close beyond the zone before entry.
+ *     This filters the "close-back-inside" fakeouts that were causing
+ *     entryTime == exitTime immediate stop-outs in the old log.
+ *
+ *  2. STRUCTURAL + ATR-BUFFERED STOP — SL is no longer just candle[i-2]'s
+ *     low/high. It's the structural swing point MINUS/PLUS a volatility
+ *     buffer (0.5x ATR of the consolidation window), so normal noise
+ *     doesn't clip the trade before the move develops.
+ *
+ *  3. MIN ZONE WIDTH FILTER — zones tighter than MIN_RANGE_PCT are skipped.
+ *     A near-flat 8-candle range isn't consolidation, it's noise, and a
+ *     "breakout" from it is meaningless.
+ *
+ *  4. BREAKOUT STRENGTH FILTER — the confirming candle must close in the
+ *     top/bottom quartile of its own range (a decisive close), not just
+ *     barely tick past the zone boundary.
+ *
+ *  5. ADAPTIVE TARGET — target is min(fixed R:R target, measured-move
+ *     target = zone height projected from breakout point) so you're not
+ *     demanding a move 3x larger than the base that produced it.
+ *
+ * These are structural fixes, not a guarantee of profitability — re-run
+ * the backtest and validate out-of-sample / walk-forward before sizing
+ * real capital against this.
  */
 @Slf4j
 @Service
@@ -40,24 +58,15 @@ public class CryptoConsolidationBacktestEngine {
 
     private static final int CONSOLIDATION_DAYS = 8;
     private static final double MAX_RANGE_PCT = 5.0;
+    private static final double MIN_RANGE_PCT = 0.6; // NEW: reject near-flat "consolidations"
     private static final int TARGET_RR = 3;
     private static final int EOD_HOUR = 23; // 23:00 UTC for crypto markets
-    private static final int THREAD_POOL_SIZE = 10; // Parallel processing threads
     private static final double MIN_VOLUME_RATIO = 1.8; // Breakout volume >= 1.8x average volume
+    private static final double ATR_STOP_MULTIPLIER = 0.5; // NEW: volatility buffer beyond structural stop
+    private static final double STRONG_CLOSE_QUARTILE = 0.25; // NEW: close must be in top/bottom 25% of its own range
 
     private final DeltaApiService deltaApiService;
 
-    /**
-     * Runs backtest for a symbol over a date range using parallel processing.
-     *
-     * @param symbol        Crypto symbol (e.g., "BTCUSD")
-     * @param fromDate      Start date for backtest
-     * @param toDate        End date for backtest
-     * @param timeframe     Timeframe for breakout detection (15m or Daily)
-     * @param maxRangePct   Maximum consolidation range percentage
-     * @param targetRR      Target risk-reward ratio
-     * @param minVolumeRatio Minimum volume ratio for breakout confirmation (default 1.8)
-     */
     public List<CryptoTradeRecord> runBacktest(
             String symbol,
             LocalDate fromDate,
@@ -67,10 +76,9 @@ public class CryptoConsolidationBacktestEngine {
             int targetRR,
             double minVolumeRatio) {
 
-        log.info("Crypto Consolidation Backtest START | {} | {} | from={} to={} maxRange={} targetRR={} minVolumeRatio={} (parallel processing)",
-                symbol, timeframe, fromDate, toDate, maxRangePct, targetRR, minVolumeRatio);
+        log.info("Crypto Consolidation Backtest v2 START | {} | {} | from={} to={} maxRange={} minRange={} targetRR={} minVolumeRatio={}",
+                symbol, timeframe, fromDate, toDate, maxRangePct, MIN_RANGE_PCT, targetRR, minVolumeRatio);
 
-        // Collect all trading days
         List<LocalDate> tradingDays = new ArrayList<>();
         LocalDate day = fromDate;
         while (!day.isAfter(toDate)) {
@@ -80,7 +88,6 @@ public class CryptoConsolidationBacktestEngine {
             day = day.plusDays(1);
         }
 
-        // Process days in parallel using parallel stream
         List<CryptoTradeRecord> allTrades = tradingDays.parallelStream()
                 .map(date -> {
                     try {
@@ -98,14 +105,11 @@ public class CryptoConsolidationBacktestEngine {
                 .flatMap(List::stream)
                 .collect(Collectors.toList());
 
-        log.info("Crypto Consolidation Backtest COMPLETE | {} - {} total trades (processed {} days in parallel)",
+        log.info("Crypto Consolidation Backtest v2 COMPLETE | {} - {} total trades (processed {} days in parallel)",
                 symbol, allTrades.size(), tradingDays.size());
         return allTrades;
     }
 
-    /**
-     * Backtests a single day.
-     */
     private List<CryptoTradeRecord> backtestDay(
             String symbol,
             LocalDate date,
@@ -116,7 +120,6 @@ public class CryptoConsolidationBacktestEngine {
 
         List<CryptoTradeRecord> trades = new ArrayList<>();
 
-        // Fetch candles based on timeframe
         List<Candle> candles;
         if (timeframe == CryptoTradeRecord.Timeframe.MINUTES_15) {
             ZonedDateTime startOfDay = date.atStartOfDay(ZoneOffset.UTC);
@@ -126,7 +129,6 @@ public class CryptoConsolidationBacktestEngine {
                     startOfDay.toEpochSecond(),
                     endOfDay.toEpochSecond());
         } else {
-            // Daily timeframe - fetch more days for consolidation analysis
             ZonedDateTime startDate = date.minusDays(CONSOLIDATION_DAYS + 2).atStartOfDay(ZoneOffset.UTC);
             ZonedDateTime endDate = date.plusDays(1).atStartOfDay(ZoneOffset.UTC);
             candles = deltaApiService.getDailyCandles(
@@ -135,36 +137,26 @@ public class CryptoConsolidationBacktestEngine {
                     endDate.toEpochSecond());
         }
 
-        if (candles == null || candles.size() < CONSOLIDATION_DAYS + 2) {
+        // Need one extra candle at the tail for confirmation lookahead
+        if (candles == null || candles.size() < CONSOLIDATION_DAYS + 3) {
             return trades;
         }
 
-        // Dedup: one trade per zone per day
         Set<String> tradedZones = new HashSet<>();
 
-        // Walk through candles starting from index CONSOLIDATION_DAYS + 1
-        // Need at least CONSOLIDATION_DAYS + 2 candles to have second prior candle for SL
-        for (int i = CONSOLIDATION_DAYS + 1; i < candles.size(); i++) {
-            Candle current = candles.get(i);
+        // Stop one earlier than before — index i is now the BREAKOUT candle,
+        // and we need candle i+1 available to confirm it.
+        for (int i = CONSOLIDATION_DAYS + 1; i < candles.size() - 1; i++) {
+            Candle breakoutCandle = candles.get(i);
 
-            // Skip candles after EOD
-            if (isAfterEOD(current)) {
+            if (isAfterEOD(breakoutCandle)) {
                 break;
             }
 
-            // Get consolidation window (previous CONSOLIDATION_DAYS candles before current)
             List<Candle> window = candles.subList(i - CONSOLIDATION_DAYS, i);
 
-            // Calculate consolidation zone
-            BigDecimal zoneHigh = window.stream()
-                    .map(Candle::getHigh)
-                    .max(BigDecimal::compareTo)
-                    .orElse(BigDecimal.ZERO);
-
-            BigDecimal zoneLow = window.stream()
-                    .map(Candle::getLow)
-                    .min(BigDecimal::compareTo)
-                    .orElse(BigDecimal.ZERO);
+            BigDecimal zoneHigh = window.stream().map(Candle::getHigh).max(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
+            BigDecimal zoneLow = window.stream().map(Candle::getLow).min(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
 
             BigDecimal midpoint = zoneHigh.add(zoneLow).divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
             if (midpoint.compareTo(BigDecimal.ZERO) == 0) {
@@ -172,74 +164,94 @@ public class CryptoConsolidationBacktestEngine {
             }
 
             BigDecimal zoneWidth = zoneHigh.subtract(zoneLow);
-            BigDecimal zoneWidthPct = zoneWidth.divide(midpoint, 4, RoundingMode.HALF_UP)
-                    .multiply(BigDecimal.valueOf(100));
+            BigDecimal zoneWidthPct = zoneWidth.divide(midpoint, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100));
 
-            // Check if range is within consolidation threshold
-            if (zoneWidthPct.compareTo(BigDecimal.valueOf(maxRangePct)) > 0) {
+            // NEW: reject both too-wide AND too-tight (noise) zones
+            if (zoneWidthPct.compareTo(BigDecimal.valueOf(maxRangePct)) > 0
+                    || zoneWidthPct.compareTo(BigDecimal.valueOf(MIN_RANGE_PCT)) < 0) {
                 continue;
             }
 
-            // Check for breakout
-            boolean bullishBreakout = current.getClose().compareTo(zoneHigh) > 0;
-            boolean bearishBreakdown = current.getClose().compareTo(zoneLow) < 0;
-
-            if (!bullishBreakout && !bearishBreakdown) {
+            boolean bullishBreak = breakoutCandle.getClose().compareTo(zoneHigh) > 0;
+            boolean bearishBreak = breakoutCandle.getClose().compareTo(zoneLow) < 0;
+            if (!bullishBreak && !bearishBreak) {
                 continue;
             }
 
-            // Volume filter: Breakout volume >= minVolumeRatio x average volume of consolidation zone
-            double avgVolume = window.stream()
-                    .mapToDouble(c -> c.getVolume().doubleValue())
-                    .average()
-                    .orElse(0.0);
-            
-            double breakoutVolume = current.getVolume().doubleValue();
+            // Volume filter on the breakout candle
+            double avgVolume = window.stream().mapToDouble(c -> c.getVolume().doubleValue()).average().orElse(0.0);
+            double breakoutVolume = breakoutCandle.getVolume().doubleValue();
             double volumeRatio = avgVolume > 0 ? breakoutVolume / avgVolume : 0.0;
-            
             if (volumeRatio < minVolumeRatio) {
-                log.debug("[{}] Volume filter failed: breakout volume={} < {}x avg volume={}",
-                        date, breakoutVolume, minVolumeRatio, avgVolume);
                 continue;
             }
 
-            // Dedup check
+            // NEW: breakout candle must show a strong (decisive) close, not a weak tick-through
+            if (!hasStrongClose(breakoutCandle, bullishBreak)) {
+                continue;
+            }
+
+            // NEW: confirmation — next candle must ALSO close beyond the zone.
+            // This is the single biggest lever against the fakeout whipsaws
+            // that were producing entryTime == exitTime SL hits in v1.
+            Candle confirmCandle = candles.get(i + 1);
+            boolean confirmed = bullishBreak
+                    ? confirmCandle.getClose().compareTo(zoneHigh) > 0
+                    : confirmCandle.getClose().compareTo(zoneLow) < 0;
+            if (!confirmed) {
+                continue;
+            }
+
             String zoneKey = String.format("%s:%.2f:%.2f", date, zoneHigh, zoneLow);
             if (tradedZones.contains(zoneKey)) {
                 continue;
             }
             tradedZones.add(zoneKey);
 
-            // Calculate SL below second candle prior to breakout (candle[i-2])
-            Candle secondPriorCandle = candles.get(i - 2);
+            // NEW: entry is on the CONFIRMATION candle's close, not the breakout candle's
+            BigDecimal entry = confirmCandle.getClose();
+
+            // NEW: structural stop = swing extreme across breakout+confirm candles,
+            // buffered by ATR of the consolidation window so normal noise doesn't clip it
+            BigDecimal atr = averageTrueRange(window);
+            BigDecimal atrBuffer = atr.multiply(BigDecimal.valueOf(ATR_STOP_MULTIPLIER));
+
             BigDecimal stopLoss;
-            if (bullishBreakout) {
-                stopLoss = secondPriorCandle.getLow();
+            if (bullishBreak) {
+                BigDecimal swingLow = breakoutCandle.getLow().min(confirmCandle.getLow());
+                stopLoss = swingLow.subtract(atrBuffer);
             } else {
-                stopLoss = secondPriorCandle.getHigh();
+                BigDecimal swingHigh = breakoutCandle.getHigh().max(confirmCandle.getHigh());
+                stopLoss = swingHigh.add(atrBuffer);
             }
 
-            BigDecimal entry = current.getClose();
             BigDecimal risk = entry.subtract(stopLoss).abs();
-
             if (risk.compareTo(BigDecimal.ZERO) == 0) {
                 continue;
             }
 
-            // Calculate target with 1:RR ratio
-            BigDecimal target = bullishBreakout
+            // NEW: adaptive target — cap the fixed R:R target at the measured-move
+            // target (zone height projected from the breakout point), whichever is nearer
+            BigDecimal fixedTarget = bullishBreak
                     ? entry.add(risk.multiply(BigDecimal.valueOf(targetRR)))
                     : entry.subtract(risk.multiply(BigDecimal.valueOf(targetRR)));
 
-            CryptoTradeRecord.Direction direction = bullishBreakout
+            BigDecimal measuredMoveTarget = bullishBreak
+                    ? zoneHigh.add(zoneWidth)
+                    : zoneLow.subtract(zoneWidth);
+
+            BigDecimal target = bullishBreak
+                    ? fixedTarget.min(measuredMoveTarget)
+                    : fixedTarget.max(measuredMoveTarget);
+
+            CryptoTradeRecord.Direction direction = bullishBreak
                     ? CryptoTradeRecord.Direction.BULLISH
                     : CryptoTradeRecord.Direction.BEARISH;
 
-            // Simulate trade
             CryptoTradeRecord trade = simulateTrade(
                     symbol, timeframe, date, direction,
-                    current, window, zoneHigh, zoneLow, zoneWidthPct,
-                    entry, stopLoss, target, risk, candles, i);
+                    confirmCandle, window, zoneHigh, zoneLow, zoneWidthPct,
+                    entry, stopLoss, target, risk, candles, i + 1);
 
             trades.add(trade);
         }
@@ -247,9 +259,35 @@ public class CryptoConsolidationBacktestEngine {
         return trades;
     }
 
-    /**
-     * Simulates a trade forward from entry.
-     */
+    /** Close must sit in the outer quartile of the candle's own high-low range. */
+    private boolean hasStrongClose(Candle candle, boolean bullish) {
+        BigDecimal range = candle.getHigh().subtract(candle.getLow());
+        if (range.compareTo(BigDecimal.ZERO) == 0) {
+            return false;
+        }
+        BigDecimal closePosition = candle.getClose().subtract(candle.getLow())
+                .divide(range, 4, RoundingMode.HALF_UP);
+        return bullish
+                ? closePosition.compareTo(BigDecimal.valueOf(1 - STRONG_CLOSE_QUARTILE)) >= 0
+                : closePosition.compareTo(BigDecimal.valueOf(STRONG_CLOSE_QUARTILE)) <= 0;
+    }
+
+    /** Simple ATR (mean true range, no smoothing) over the consolidation window. */
+    private BigDecimal averageTrueRange(List<Candle> window) {
+        BigDecimal sumTR = BigDecimal.ZERO;
+        for (int k = 1; k < window.size(); k++) {
+            Candle curr = window.get(k);
+            Candle prev = window.get(k - 1);
+            BigDecimal highLow = curr.getHigh().subtract(curr.getLow());
+            BigDecimal highPrevClose = curr.getHigh().subtract(prev.getClose()).abs();
+            BigDecimal lowPrevClose = curr.getLow().subtract(prev.getClose()).abs();
+            BigDecimal trueRange = highLow.max(highPrevClose).max(lowPrevClose);
+            sumTR = sumTR.add(trueRange);
+        }
+        int divisor = Math.max(1, window.size() - 1);
+        return sumTR.divide(BigDecimal.valueOf(divisor), 4, RoundingMode.HALF_UP);
+    }
+
     private CryptoTradeRecord simulateTrade(
             String symbol,
             CryptoTradeRecord.Timeframe timeframe,
@@ -271,11 +309,9 @@ public class CryptoConsolidationBacktestEngine {
         BigDecimal exitPrice = entry;
         Instant exitTime = null;
 
-        // Walk forward from entryIdx + 1
         for (int j = entryIdx + 1; j < candles.size(); j++) {
             Candle c = candles.get(j);
 
-            // EOD exit
             if (isAfterEOD(c)) {
                 exitPrice = c.getClose();
                 exitTime = c.getCloseTime();
@@ -312,23 +348,16 @@ public class CryptoConsolidationBacktestEngine {
             }
         }
 
-        // Calculate P&L
-        BigDecimal pnlPoints;
-        if (direction == CryptoTradeRecord.Direction.BULLISH) {
-            pnlPoints = exitPrice.subtract(entry);
-        } else {
-            pnlPoints = entry.subtract(exitPrice);
-        }
+        BigDecimal pnlPoints = direction == CryptoTradeRecord.Direction.BULLISH
+                ? exitPrice.subtract(entry)
+                : entry.subtract(exitPrice);
 
         BigDecimal pnlR = risk.compareTo(BigDecimal.ZERO) > 0
                 ? pnlPoints.divide(risk, 4, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
-        // Get consolidation window dates
-        LocalDate zoneStart = consolidationWindow.get(0).getOpenTime()
-                .atZone(ZoneOffset.UTC).toLocalDate();
-        LocalDate zoneEnd = consolidationWindow.get(consolidationWindow.size() - 1)
-                .getOpenTime().atZone(ZoneOffset.UTC).toLocalDate();
+        LocalDate zoneStart = consolidationWindow.get(0).getOpenTime().atZone(ZoneOffset.UTC).toLocalDate();
+        LocalDate zoneEnd = consolidationWindow.get(consolidationWindow.size() - 1).getOpenTime().atZone(ZoneOffset.UTC).toLocalDate();
 
         return CryptoTradeRecord.builder()
                 .symbol(symbol)
@@ -354,9 +383,6 @@ public class CryptoConsolidationBacktestEngine {
                 .build();
     }
 
-    /**
-     * Checks if candle is after EOD time.
-     */
     private boolean isAfterEOD(Candle candle) {
         ZonedDateTime zdt = candle.getOpenTime().atZone(ZoneOffset.UTC);
         return zdt.getHour() >= EOD_HOUR;

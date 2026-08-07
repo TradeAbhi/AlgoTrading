@@ -43,7 +43,6 @@ public class AlertScheduler {
             }
         }
 
-        log.info("=== Alert check completed ===");
     }
 
     /**

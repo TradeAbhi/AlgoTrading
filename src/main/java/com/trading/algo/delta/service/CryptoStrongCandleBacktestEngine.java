@@ -22,17 +22,17 @@ import java.util.List;
 public class CryptoStrongCandleBacktestEngine {
 
     private static final BigDecimal BODY_RATIO =
-            BigDecimal.valueOf(0.65);
+            BigDecimal.valueOf(0.6);
 
     private static final BigDecimal THREE =
-            BigDecimal.valueOf(2);
+            BigDecimal.valueOf(2.5);
 
     private static final BigDecimal FOUR =
-            BigDecimal.valueOf(2.5);
+            BigDecimal.valueOf(3.5);
 
     // --- ATR-based stop loss config (replaces the old flat 0.5% SL_BUFFER) ---
     private static final int ATR_PERIOD = 14;
-    private static final BigDecimal ATR_SL_MULTIPLIER = BigDecimal.valueOf(0.75);
+    private static final BigDecimal ATR_SL_MULTIPLIER = BigDecimal.valueOf(0.5);
 
     // --- Volume confirmation filter config ---
     private static final int VOLUME_LOOKBACK = 20;

@@ -21,14 +21,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Runs the Strong-Candle breakout strategy across a grid of (ATR stop
- * multiplier x volume multiplier) combinations WITHOUT re-hitting the Delta
- * API per combination.
+ * Runs the Strong-Candle breakout strategy across a grid of
+ * (Body Ratio x ATR stop multiplier x Volume multiplier x Partial Target R x
+ * Final Target R) combinations WITHOUT re-hitting the Delta API per
+ * combination.
  *
  * Candle data (daily + 15m) is fetched exactly once per symbol, and the
  * ATR(14) / volume-average(20) series are precomputed once over the full
- * range. Each grid combination then only does cheap in-memory comparisons
- * against that shared data.
+ * range (these two periods are fixed, not swept). Each grid combination then
+ * only does cheap in-memory comparisons against that shared data.
  */
 @Slf4j
 @Service
@@ -36,25 +37,58 @@ import java.util.Map;
 public class CryptoStrongCandleParameterSweepEngine {
 
     // ---- Fixed parameters (not swept) ----
-    private static final BigDecimal BODY_RATIO = BigDecimal.valueOf(0.7);
     private static final int ATR_PERIOD = 14;
     private static final int VOLUME_LOOKBACK = 20;
-    private static final BigDecimal PARTIAL_TARGET_R = BigDecimal.valueOf(2);
-    private static final BigDecimal FINAL_TARGET_R = BigDecimal.valueOf(3);
 
-    // ---- Swept parameters (3 x 3 = 9 combinations) ----
+    // ---- Swept parameters (3 x 3 x 3 x 3 x 3 = up to 243 combinations) ----
+    private static final List<BigDecimal> BODY_RATIOS = List.of(
+            BigDecimal.valueOf(0.60), BigDecimal.valueOf(0.70), BigDecimal.valueOf(0.80));
+
     private static final List<BigDecimal> ATR_SL_MULTIPLIERS = List.of(
-            BigDecimal.valueOf(0.25), BigDecimal.valueOf(0.5), BigDecimal.valueOf(0.7));
+            BigDecimal.valueOf(0.5), BigDecimal.valueOf(0.75), BigDecimal.valueOf(1.0));
 
     private static final List<BigDecimal> VOLUME_MULTIPLIERS = List.of(
-            BigDecimal.valueOf(1), BigDecimal.valueOf(1.5), BigDecimal.valueOf(2));
+            BigDecimal.valueOf(1.2), BigDecimal.valueOf(1.3), BigDecimal.valueOf(1.5));
+
+    private static final List<BigDecimal> PARTIAL_TARGET_RS = List.of(
+            BigDecimal.valueOf(2), BigDecimal.valueOf(2.5), BigDecimal.valueOf(3));
+
+    private static final List<BigDecimal> FINAL_TARGET_RS = List.of(
+            BigDecimal.valueOf(3), BigDecimal.valueOf(3.5), BigDecimal.valueOf(4));
 
     private final DeltaApiService deltaApiService;
+    private static final List<BigDecimal> BREAKOUT_BODY_RATIOS = List.of(
+            BigDecimal.valueOf(0.55), BigDecimal.valueOf(0.65), BigDecimal.valueOf(0.75));
+
 
     /**
-     * Fetches data once per symbol, then runs every (atr x volume)
-     * combination in memory. Results are sorted by combined (all-symbol)
-     * profit factor, descending.
+     * bodyRatio[idx] = body/range ratio of candles.get(idx) itself.
+     * Used to check whether the BREAKOUT candle (not the previous day) is
+     * itself a "strong candle". Null when range is zero.
+     */
+    private BigDecimal[] computeCandleBodyRatioSeries(List<Candle> candles) {
+
+        BigDecimal[] ratios = new BigDecimal[candles.size()];
+
+        for (int idx = 0; idx < candles.size(); idx++) {
+
+            Candle c = candles.get(idx);
+            BigDecimal range = c.getHigh().subtract(c.getLow());
+
+            if (range.compareTo(BigDecimal.ZERO) == 0) {
+                continue;
+            }
+
+            BigDecimal body = c.getClose().subtract(c.getOpen()).abs();
+            ratios[idx] = body.divide(range, 4, RoundingMode.HALF_UP);
+        }
+
+        return ratios;
+    }
+    /**
+     * Fetches data once per symbol, then runs every
+     * (bodyRatio x atr x volume x partialR x finalR) combination in memory.
+     * Results are sorted by combined (all-symbol) profit factor, descending.
      */
     public List<ParameterCombinationResult> runSweep(
             List<String> symbols,
@@ -104,6 +138,45 @@ public class CryptoStrongCandleParameterSweepEngine {
         return results;
     }
 
+
+    /**
+     * Converts full sweep results into compact leaderboard rows - no trade
+     * lists, no per-symbol breakdown. Use this for API responses instead of
+     * returning ParameterCombinationResult directly (that includes every
+     * individual trade record per symbol per combo, which balloons fast:
+     * ~250 combos x 3 symbols x hundreds of trades = lakhs of rows).
+     */
+    public List<ParameterSweepSummaryRow> toSummary(
+            List<ParameterCombinationResult> results, int topN) {
+
+        List<ParameterSweepSummaryRow> summary = new ArrayList<>();
+
+        int limit = Math.min(topN, results.size());
+
+        for (int i = 0; i < limit; i++) {
+
+            ParameterCombinationResult r = results.get(i);
+            ParameterCombination c = r.getCombination();
+            CryptoStrongCandleBacktestReport rpt = r.getCombinedReport();
+
+            summary.add(new ParameterSweepSummaryRow(
+                    i + 1,
+                    c.getBodyRatio(),
+                    //c.getBreakoutBodyRatio(),
+                    c.getAtrMultiplier(),
+                    c.getVolumeMultiplier(),
+                    c.getPartialTargetR(),
+                    c.getFinalTargetR(),
+                    rpt.getTotalTrades(),
+                    rpt.getWinRate(),
+                    rpt.getProfitFactor(),
+                    rpt.getExpectancy(),
+                    rpt.getNetProfit()));
+        }
+
+        return summary;
+    }
+
     /** Logs a compact leaderboard - call after runSweep(). */
     public void printSummary(List<ParameterCombinationResult> results) {
 
@@ -112,10 +185,14 @@ public class CryptoStrongCandleParameterSweepEngine {
         for (ParameterCombinationResult r : results) {
 
             CryptoStrongCandleBacktestReport rpt = r.getCombinedReport();
+            ParameterCombination c = r.getCombination();
 
-            log.info("ATRx{} | VOLx{} -> trades={}, winRate={}%, PF={}, netProfit={}, expectancy={}",
-                    r.getCombination().getAtrMultiplier(),
-                    r.getCombination().getVolumeMultiplier(),
+            log.info("BODYx{} | ATRx{} | VOLx{} | PARTIALx{}R | FINALx{}R -> trades={}, winRate={}%, PF={}, netProfit={}, expectancy={}",
+                    c.getBodyRatio(),
+                    c.getAtrMultiplier(),
+                    c.getVolumeMultiplier(),
+                    c.getPartialTargetR(),
+                    c.getFinalTargetR(),
                     rpt.getTotalTrades(),
                     rpt.getWinRate(),
                     rpt.getProfitFactor(),
@@ -128,9 +205,23 @@ public class CryptoStrongCandleParameterSweepEngine {
 
         List<ParameterCombination> combos = new ArrayList<>();
 
-        for (BigDecimal atrMult : ATR_SL_MULTIPLIERS) {
-            for (BigDecimal volMult : VOLUME_MULTIPLIERS) {
-                combos.add(new ParameterCombination(atrMult, volMult));
+        for (BigDecimal bodyRatio : BODY_RATIOS) {
+            for (BigDecimal atrMult : ATR_SL_MULTIPLIERS) {
+                for (BigDecimal volMult : VOLUME_MULTIPLIERS) {
+                    for (BigDecimal partialR : PARTIAL_TARGET_RS) {
+                        for (BigDecimal finalR : FINAL_TARGET_RS) {
+
+                            // Final target must sit beyond partial target,
+                            // otherwise the trade logic is nonsensical.
+                            if (finalR.compareTo(partialR) <= 0) {
+                                continue;
+                            }
+
+                            combos.add(new ParameterCombination(
+                                    bodyRatio, atrMult, volMult, partialR, finalR));
+                        }
+                    }
+                }
             }
         }
 
@@ -164,9 +255,13 @@ public class CryptoStrongCandleParameterSweepEngine {
         BigDecimal[] atrSeries = computeATRSeries(all15m, ATR_PERIOD);
         BigDecimal[] avgVolumeSeries = computeAvgVolumeSeries(all15m, VOLUME_LOOKBACK);
 
+        // NOTE: body-ratio is no longer filtered here, since it's now a
+        // swept parameter. Every day with a valid direction is kept as a
+        // candidate, carrying its own actual bodyRatio value. Each combo
+        // filters candidates against its own threshold in findTradeForCombo.
         List<DailyCandidate> candidates = buildCandidates(dailyCandles, all15m, fromDate, toDate);
 
-        log.info("{}: {} daily candles, {} 15m candles, {} breakout candidates",
+        log.info("{}: {} daily candles, {} 15m candles, {} directional candidates",
                 symbol, dailyCandles.size(), all15m.size(), candidates.size());
 
         return new SymbolData(symbol, all15m, atrSeries, avgVolumeSeries, candidates);
@@ -200,9 +295,8 @@ public class CryptoStrongCandleParameterSweepEngine {
             BigDecimal body = previousDay.getClose().subtract(previousDay.getOpen()).abs();
             BigDecimal bodyRatio = body.divide(range, 4, RoundingMode.HALF_UP);
 
-            if (bodyRatio.compareTo(BODY_RATIO) < 0) {
-                continue;
-            }
+            // NOTE: no threshold comparison here anymore - bodyRatio is
+            // stored on the candidate and filtered per-combo downstream.
 
             CryptoStrongCandleTradeRecord.Direction direction;
             int cmp = previousDay.getClose().compareTo(previousDay.getOpen());
@@ -314,6 +408,11 @@ public class CryptoStrongCandleParameterSweepEngine {
 
         for (DailyCandidate candidate : data.getCandidates()) {
 
+            // Body-ratio threshold applied here since it's now swept.
+            if (candidate.getBodyRatio().compareTo(combo.getBodyRatio()) < 0) {
+                continue;
+            }
+
             CryptoStrongCandleTradeRecord trade = findTradeForCombo(data, candidate, combo);
 
             if (trade != null) {
@@ -387,6 +486,9 @@ public class CryptoStrongCandleParameterSweepEngine {
         BigDecimal bodyRatio = candidate.getBodyRatio();
         LocalDate tradeDate = candidate.getTradeDate();
 
+        BigDecimal partialTargetR = combo.getPartialTargetR();
+        BigDecimal finalTargetR = combo.getFinalTargetR();
+
         // Trades are bounded to the same day-plus-one window the original
         // engine used (it fetched tradeDate -> tradeDate+1 per day).
         int boundIndexExclusive = candidate.getDayEndIndex();
@@ -412,11 +514,11 @@ public class CryptoStrongCandleParameterSweepEngine {
         BigDecimal targetFinal;
 
         if (direction == CryptoStrongCandleTradeRecord.Direction.BULLISH) {
-            targetPartial = entry.add(risk.multiply(PARTIAL_TARGET_R));
-            targetFinal = entry.add(risk.multiply(FINAL_TARGET_R));
+            targetPartial = entry.add(risk.multiply(partialTargetR));
+            targetFinal = entry.add(risk.multiply(finalTargetR));
         } else {
-            targetPartial = entry.subtract(risk.multiply(PARTIAL_TARGET_R));
-            targetFinal = entry.subtract(risk.multiply(FINAL_TARGET_R));
+            targetPartial = entry.subtract(risk.multiply(partialTargetR));
+            targetFinal = entry.subtract(risk.multiply(finalTargetR));
         }
 
         boolean partialBooked = false;
@@ -589,6 +691,7 @@ public class CryptoStrongCandleParameterSweepEngine {
         private final List<Candle> all15m;
         private final BigDecimal[] atrSeries;
         private final BigDecimal[] avgVolumeSeries;
+
         private final List<DailyCandidate> candidates;
     }
 
@@ -606,8 +709,11 @@ public class CryptoStrongCandleParameterSweepEngine {
     @Getter
     @AllArgsConstructor
     public static class ParameterCombination {
+        private final BigDecimal bodyRatio;
         private final BigDecimal atrMultiplier;
         private final BigDecimal volumeMultiplier;
+        private final BigDecimal partialTargetR;
+        private final BigDecimal finalTargetR;
     }
 
     @Getter
@@ -616,5 +722,22 @@ public class CryptoStrongCandleParameterSweepEngine {
         private final ParameterCombination combination;
         private final Map<String, CryptoStrongCandleBacktestReport> perSymbolReports;
         private final CryptoStrongCandleBacktestReport combinedReport;
+    }
+
+    @Getter
+    @AllArgsConstructor
+    public static class ParameterSweepSummaryRow {
+        private final int rank;
+        private final BigDecimal bodyRatio;
+        //private final BigDecimal breakoutBodyRatio;
+        private final BigDecimal atrMultiplier;
+        private final BigDecimal volumeMultiplier;
+        private final BigDecimal partialTargetR;
+        private final BigDecimal finalTargetR;
+        private final int trades;
+        private final BigDecimal winRate;
+        private final BigDecimal profitFactor;
+        private final BigDecimal expectancy;
+        private final BigDecimal netProfit;
     }
 }

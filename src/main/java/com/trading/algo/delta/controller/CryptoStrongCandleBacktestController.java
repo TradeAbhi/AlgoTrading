@@ -165,4 +165,22 @@ public class CryptoStrongCandleBacktestController {
         return ResponseEntity.ok(results);
     }
 
+    @GetMapping("/dynamic-check-summary")
+    public ResponseEntity<?> optimizeSummary(
+            @RequestParam LocalDate from,
+            @RequestParam LocalDate to,
+            @RequestParam(defaultValue = "50") int topN) {
+
+        List<CryptoStrongCandleParameterSweepEngine.ParameterCombinationResult> results =
+                optimizer.runSweep(
+                        List.of("BTCUSD", "ETHUSD", "SOLUSD"),
+                        from,
+                        to);
+
+        List<CryptoStrongCandleParameterSweepEngine.ParameterSweepSummaryRow> summary =
+                optimizer.toSummary(results, topN);
+
+        return ResponseEntity.ok(summary);
+    }
+
 }

@@ -13,11 +13,13 @@ import com.trading.algo.upstox.UpstoxHistoricalCandleService;
 import com.trading.algo.upstox.UpstoxInstrumentMasterService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -55,6 +57,10 @@ public class LiveStrategyAlertService {
     private final BacktestConfig                config;
     private final MomentumStockSnapshotService  momentumStockSnapshotService;
     private final MarketSentimentService        marketSentimentService;
+
+    /** Setups identified at 9:46, awaiting a close beyond the C1/C2 range. */
+    private final ConcurrentMap<String, PendingBreakout> pendingBreakouts = new ConcurrentHashMap<>();
+    private volatile LocalDate pendingBreakoutDate;
 
     // =========================================================================
     // FNO universe scan — scans ALL Nifty F&O stocks (original logic)
@@ -101,6 +107,7 @@ public class LiveStrategyAlertService {
             return 0;
         }
 
+        registerPendingBreakouts(today, signals, symbolKeyMap);
         sendTelegramAlert(signals, indexSignals, today);
         return signals.size() + indexSignals.size();
     }
@@ -184,8 +191,100 @@ public class LiveStrategyAlertService {
             */
         }
 
+        registerPendingBreakouts(today, signals, symbolKeyMap);
         sendTelegramAlert(signals, indexSignals, today);
         return signals.size() + indexSignals.size();
+    }
+
+    /**
+     * Checks the 9:46 candidates after each newly closed 15-minute candle.
+     * BUY requires a close above max(C1 high, C2 high); SELL requires a close
+     * below min(C1 low, C2 low). Triggered symbols are removed immediately so
+     * they cannot alert again during the same trading day.
+     */
+    @Scheduled(cron = "0 1,16,31,46 10-13 * * MON-FRI", zone = "Asia/Kolkata")
+    @Scheduled(cron = "0 1,16,31 14 * * MON-FRI", zone = "Asia/Kolkata")
+    public void checkPendingBreakouts() {
+        checkPendingBreakouts(LocalDate.now(), LocalTime.now());
+    }
+
+    /** Enables a manual endpoint to run the same confirmation check. */
+    public int checkPendingBreakoutsNow() {
+        return checkPendingBreakouts(LocalDate.now(), LocalTime.now());
+    }
+
+    private int checkPendingBreakouts(LocalDate today, LocalTime now) {
+        if (!today.equals(pendingBreakoutDate) || pendingBreakouts.isEmpty()) {
+            return 0;
+        }
+
+        List<TriggeredBreakout> triggered = new CopyOnWriteArrayList<>();
+        ExecutorService pool = Executors.newFixedThreadPool(config.getThreadPoolSize());
+        try {
+            List<CompletableFuture<Void>> futures = pendingBreakouts.entrySet().stream()
+                    .map(entry -> CompletableFuture.runAsync(() -> checkPendingBreakout(entry, today, now, triggered), pool))
+                    .collect(Collectors.toList());
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        } finally {
+            pool.shutdown();
+        }
+
+        if (!triggered.isEmpty()) {
+            sendTriggeredBreakoutAlert(triggered, today, now);
+        }
+        return triggered.size();
+    }
+
+    @Scheduled(cron = "0 46 14 * * MON-FRI", zone = "Asia/Kolkata")
+    public void clearExpiredPendingBreakouts() {
+        pendingBreakouts.clear();
+        pendingBreakoutDate = null;
+    }
+
+    private void registerPendingBreakouts(LocalDate today, List<BacktestTrade> signals,
+                                          Map<String, String> symbolKeyMap) {
+        if (!today.equals(pendingBreakoutDate)) {
+            pendingBreakouts.clear();
+            pendingBreakoutDate = today;
+        }
+        for (BacktestTrade signal : signals) {
+            String instrumentKey = symbolKeyMap.get(signal.getSymbol());
+            if (instrumentKey != null) {
+                pendingBreakouts.putIfAbsent(signal.getSymbol(), new PendingBreakout(instrumentKey, signal));
+            }
+        }
+        log.info("Opening-candle trigger monitor armed: {} pending setups", pendingBreakouts.size());
+    }
+
+    private void checkPendingBreakout(Map.Entry<String, PendingBreakout> entry, LocalDate today,
+                                       LocalTime now, List<TriggeredBreakout> triggered) {
+        PendingBreakout pending = entry.getValue();
+        try {
+            List<Candle> candles = candleService.fetchDayCandles(pending.instrumentKey(), today);
+            Candle latestClosed = candles.stream()
+                    .filter(c -> !c.getTimestamp().toLocalTime().plusMinutes(15).isAfter(now))
+                    .max(Comparator.comparing(Candle::getTimestamp))
+                    .orElse(null);
+            if (latestClosed == null) {
+                return;
+            }
+
+            BacktestTrade setup = pending.setup();
+            double breakoutLevel = setup.getDirection() == Direction.BUY
+                    ? Math.max(setup.getC1High(), setup.getC2High())
+                    : Math.min(setup.getC1Low(), setup.getC2Low());
+            boolean triggeredNow = setup.getDirection() == Direction.BUY
+                    ? latestClosed.getClose() > breakoutLevel
+                    : latestClosed.getClose() < breakoutLevel;
+
+            if (triggeredNow && pendingBreakouts.remove(entry.getKey(), pending)) {
+                triggered.add(TriggeredBreakout.from(setup, latestClosed, breakoutLevel, config));
+                log.info("Opening-candle breakout triggered: {} {} close={} level={}",
+                        setup.getSymbol(), setup.getDirection(), latestClosed.getClose(), breakoutLevel);
+            }
+        } catch (Exception e) {
+            log.error("Opening-candle trigger check failed for {}: {}", entry.getKey(), e.getMessage());
+        }
     }
 
     // =========================================================================
@@ -365,6 +464,49 @@ public class LiveStrategyAlertService {
         }
     }
 
+    private void sendTriggeredBreakoutAlert(List<TriggeredBreakout> triggered, LocalDate date, LocalTime scanTime) {
+        List<TriggeredBreakout> buyAbovePrevHigh = triggered.stream()
+                .filter(t -> t.direction() == Direction.BUY && t.entryAbovePrevHigh())
+                .toList();
+        List<TriggeredBreakout> buyBelowPrevHigh = triggered.stream()
+                .filter(t -> t.direction() == Direction.BUY && !t.entryAbovePrevHigh())
+                .toList();
+        List<TriggeredBreakout> sellAbovePrevLow = triggered.stream()
+                .filter(t -> t.direction() == Direction.SELL && t.entryAbovePrevLow())
+                .toList();
+        List<TriggeredBreakout> sellBelowPrevLow = triggered.stream()
+                .filter(t -> t.direction() == Direction.SELL && !t.entryAbovePrevLow())
+                .toList();
+
+        StringBuilder message = new StringBuilder();
+        message.append("⚡ *Opening Candle Breakout Triggered*\n")
+                .append("📅 ").append(date).append(" | Checked: ").append(scanTime.withSecond(0).withNano(0)).append("\n")
+                .append("━━━━━━━━━━━━━━━━━━━━\n\n");
+        appendTriggeredCategory(message, "🟢 BUY — Above Prev Day High", buyAbovePrevHigh);
+        appendTriggeredCategory(message, "🟢 BUY — Below Prev Day High", buyBelowPrevHigh);
+        appendTriggeredCategory(message, "🔴 SELL — Above Prev Day Low", sellAbovePrevLow);
+        appendTriggeredCategory(message, "🔴 SELL — Below Prev Day Low", sellBelowPrevLow);
+        message.append("━━━━━━━━━━━━━━━━━━━━\n")
+                .append("Triggered now: ").append(triggered.size())
+                .append(" | Still monitoring: ").append(pendingBreakouts.size());
+
+        telegramService.sendMessage(message.toString());
+    }
+
+    private void appendTriggeredCategory(StringBuilder message, String heading, List<TriggeredBreakout> signals) {
+        if (signals.isEmpty()) {
+            return;
+        }
+        message.append(heading).append(" (").append(signals.size()).append(")\n");
+        for (TriggeredBreakout signal : signals) {
+            message.append(String.format(
+                    "`%-12s` Trigger: *%.2f* (close)\n  Range: %.2f | SL: %.2f | Target: %.2f\n  Risk: %.1f pts | Wick: %.2f\n",
+                    signal.symbol(), signal.entryPrice(), signal.breakoutLevel(), signal.stopLoss(), signal.target(),
+                    signal.riskPoints(), signal.wickRatio()));
+        }
+        message.append('\n');
+    }
+
     private String formatSignal(BacktestTrade t) {
         // Volume flag (Point 2) — highlight strong-volume setups with 🔥
         String volTag = Boolean.TRUE.equals(t.getVolumeFlag()) ? " 🔥" : "";
@@ -384,5 +526,28 @@ public class LiveStrategyAlertService {
             t.getRiskPoints(),
             t.getC1WickRatio()
         );
+    }
+
+    private record PendingBreakout(String instrumentKey, BacktestTrade setup) { }
+
+    private record TriggeredBreakout(String symbol, Direction direction, double entryPrice, double breakoutLevel,
+                                    double stopLoss, double target, double riskPoints, double wickRatio,
+                                    boolean entryAbovePrevHigh, boolean entryAbovePrevLow) {
+        private static TriggeredBreakout from(BacktestTrade setup, Candle triggerCandle,
+                                             double breakoutLevel, BacktestConfig config) {
+            double entry = triggerCandle.getClose();
+            double marginFactor = config.getSlMarginPercent() / 100.0;
+            double stopLoss = setup.getDirection() == Direction.BUY
+                    ? setup.getC2Low() * (1 - marginFactor)
+                    : setup.getC2High() * (1 + marginFactor);
+            double risk = Math.abs(entry - stopLoss);
+            double target = setup.getDirection() == Direction.BUY
+                    ? entry + risk * config.getTargetRR()
+                    : entry - risk * config.getTargetRR();
+            return new TriggeredBreakout(setup.getSymbol(), setup.getDirection(), entry, breakoutLevel,
+                    stopLoss, target, risk, setup.getC1WickRatio(),
+                    setup.getPrevDayHigh() != null && entry > setup.getPrevDayHigh(),
+                    setup.getPrevDayLow() != null && entry > setup.getPrevDayLow());
+        }
     }
 }

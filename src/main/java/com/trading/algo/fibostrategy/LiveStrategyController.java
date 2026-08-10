@@ -70,4 +70,17 @@ public class LiveStrategyController {
                 "telegramSent", true
         ));
     }
+
+    /**
+     * Manually checks the stored 9:46 setups against the most recently closed
+     * 15-minute candle. Triggered symbols are alerted once and removed.
+     */
+    @PostMapping("/check-breakouts")
+    public ResponseEntity<Map<String, Object>> checkBreakouts() {
+        int triggered = liveStrategyAlertService.checkPendingBreakoutsNow();
+        return ResponseEntity.ok(Map.of(
+                "status", "Breakout check complete",
+                "triggered", triggered
+        ));
+    }
 }

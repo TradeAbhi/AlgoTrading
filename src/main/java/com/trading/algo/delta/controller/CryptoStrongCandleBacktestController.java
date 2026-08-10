@@ -136,12 +136,16 @@ public class CryptoStrongCandleBacktestController {
                         from,
                         to));
 
+
+
+
         reports.put(
-                "SOL",
+                "BNB",
                 backtestEngine.runBacktest(
-                        "SOLUSD",
+                        "BNBUSD",
                         from,
                         to));
+
 
         return ResponseEntity.ok(reports);
 
@@ -156,7 +160,7 @@ public class CryptoStrongCandleBacktestController {
 
         List<CryptoStrongCandleParameterSweepEngine.ParameterCombinationResult> results =
                 optimizer.runSweep(
-                        List.of("BTCUSD","ETHUSD","SOLUSD"),
+                        List.of("BTCUSD","ETHUSD","BNBUSD"),
                         from,
                         to);
 
@@ -173,7 +177,7 @@ public class CryptoStrongCandleBacktestController {
 
         List<CryptoStrongCandleParameterSweepEngine.ParameterCombinationResult> results =
                 optimizer.runSweep(
-                        List.of("BTCUSD", "ETHUSD", "SOLUSD"),
+                        List.of("BTCUSD","ETHUSD","BNBUSD"),
                         from,
                         to);
 

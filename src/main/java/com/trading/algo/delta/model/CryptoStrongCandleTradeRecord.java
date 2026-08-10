@@ -158,4 +158,15 @@ public class CryptoStrongCandleTradeRecord {
      * True if SL shifted to entry.
      */
     private boolean breakEvenActivated;
+
+    private int reEntrySequence;                 // 0 = primary entry, 1,2,3... = Obs-5 chained re-entry
+    private BigDecimal positionSizeMultiplier;    // Obs-3: 1.0 normally, 0.5 when consecutive pre-move detected
+    private boolean consecutiveMoveDetected;      // Obs-3 flag
+    private boolean slTrailApplied;               // Obs-1 flag
+
+    private BigDecimal atrValue;              // raw ATR(14) at entry
+    private BigDecimal originalStopLoss;      // ATR-based SL, before any trail/breakeven
+    private BigDecimal trailedStopLossLevel;  // Obs-1 result, null if trail never triggered
+    private BigDecimal breakEvenStopLoss;     // = entry, null if breakeven never triggered
+// stopLoss (existing field) stays as-is: the FINAL/active SL at exit
 }

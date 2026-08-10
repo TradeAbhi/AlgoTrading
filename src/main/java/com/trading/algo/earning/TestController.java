@@ -191,4 +191,10 @@ public String testGlobal() {
 		int count = earningsWindowFiboService.manualTrigger();
 		return "Earnings window Fibonacci scan complete. Found " + count + " setups. Check Telegram.";
 	}
+
+	@GetMapping("/test/earnings-window-fibo/check-breakouts")
+	public String checkEarningsWindowFiboBreakouts() {
+		int count = earningsWindowFiboService.checkPendingBreakoutsNow();
+		return "Earnings window Fibonacci breakout check complete. Triggered " + count + " setups. Check Telegram.";
+	}
 }

@@ -189,6 +189,23 @@ public class EarningsService {
         }
         return historicalEarnings;
     }
+
+    /** Fetches NSE historical earnings and persists only records not already stored. */
+    public int fetchAndStoreHistoricalEarnings(LocalDate fromDate, LocalDate toDate) {
+        if (fromDate.isAfter(toDate)) {
+            throw new IllegalArgumentException("from date must be on or before to date");
+        }
+
+        List<Earnings> fetched = fetchHistoricalEarnings(fromDate, toDate);
+        Set<String> existingKeys = repo.findAll().stream()
+                .map(e -> e.getSymbol() + "_" + e.getResultDate())
+                .collect(Collectors.toSet());
+        List<Earnings> newRecords = fetched.stream()
+                .filter(e -> existingKeys.add(e.getSymbol() + "_" + e.getResultDate()))
+                .collect(Collectors.toList());
+        repo.saveAll(newRecords);
+        return newRecords.size();
+    }
 }
 
 //Step 3: Hit the actual API with cookies now set

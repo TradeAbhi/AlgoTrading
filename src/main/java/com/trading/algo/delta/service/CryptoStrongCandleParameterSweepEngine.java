@@ -19,17 +19,27 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Runs the Strong-Candle breakout strategy across a grid of
- * (Body Ratio x ATR stop multiplier x Volume multiplier x Partial Target R x
- * Final Target R) combinations WITHOUT re-hitting the Delta API per
- * combination.
+ * (Body Ratio x Breakout Body Ratio x ATR stop multiplier x Volume
+ * multiplier x Partial Target R x Final Target R x Time-based SL Trail
+ * candles) combinations WITHOUT re-hitting the Delta API per combination.
  *
  * Candle data (daily + 15m) is fetched exactly once per symbol, and the
  * ATR(14) / volume-average(20) series are precomputed once over the full
  * range (these two periods are fixed, not swept). Each grid combination then
  * only does cheap in-memory comparisons against that shared data.
+ *
+ * Implements observation-based refinements:
+ *   Obs 1 - Time-based SL trailing (dynamic/swept: TIME_BASED_SL_TRAIL_CANDLES)
+ *   Obs 2 - Skip entries where the breakout candle is already too extended
+ *   Obs 3 - Reduce position size when prior candles already show consecutive
+ *           movement in the breakout direction before the breakout candle
+ *   Obs 5 - Same-day chained re-entry after a stop-loss exit
+ *   (Obs 4 and Obs 6 intentionally NOT implemented per instruction - Obs 6
+ *    depends on Obs 4's partial-exit event, which doesn't exist here.)
  */
 @Slf4j
 @Service
@@ -40,7 +50,12 @@ public class CryptoStrongCandleParameterSweepEngine {
     private static final int ATR_PERIOD = 14;
     private static final int VOLUME_LOOKBACK = 20;
 
-    // ---- Swept parameters (3 x 3 x 3 x 3 x 3 = up to 243 combinations) ----
+    // Delta's /v2/history/candles caps responses at 2000 candles per call.
+    // At 15m resolution that's ~20.8 days. We chunk at 18 days to stay
+    // safely under the cap with margin.
+    private static final int CANDLE_15M_CHUNK_DAYS = 18;
+
+    // ---- Swept parameters ----
     private static final List<BigDecimal> BODY_RATIOS = List.of(
             BigDecimal.valueOf(0.60), BigDecimal.valueOf(0.70), BigDecimal.valueOf(0.80));
 
@@ -56,16 +71,41 @@ public class CryptoStrongCandleParameterSweepEngine {
     private static final List<BigDecimal> FINAL_TARGET_RS = List.of(
             BigDecimal.valueOf(3), BigDecimal.valueOf(3.5), BigDecimal.valueOf(4));
 
-    private final DeltaApiService deltaApiService;
     private static final List<BigDecimal> BREAKOUT_BODY_RATIOS = List.of(
             BigDecimal.valueOf(0.55), BigDecimal.valueOf(0.65), BigDecimal.valueOf(0.75));
 
+    // Obs 1 (dynamic, per your instruction): N candles to monitor after
+    // entry (excluding the breakout candle itself) before trailing SL to
+    // the extreme of that window, if price hasn't moved favorably yet.
+    // Values chosen to bracket the "9-12 hours" / "10-12 candles" you
+    // described (15m candles: 8 candles = 2h, up to 12 candles = 3h as a
+    // near-term check; tune freely).
+    private static final List<Integer> TIME_BASED_SL_TRAIL_CANDLES = List.of(8, 10, 12);
 
-    /**
-     * bodyRatio[idx] = body/range ratio of candles.get(idx) itself.
-     * Used to check whether the BREAKOUT candle (not the previous day) is
-     * itself a "strong candle". Null when range is zero.
-     */
+    // ---- Fixed thresholds for Obs 2 / Obs 3 / Obs 5 (not swept - no
+    // explicit dynamic ranges were given for these, so kept as tunable
+    // constants for now; can be promoted to swept lists the same way as
+    // TIME_BASED_SL_TRAIL_CANDLES if you want them backtested too) ----
+
+    // Obs 2: if the breakout candle's ATR-based risk, expressed as % of
+    // entry price, exceeds this, the entry is skipped entirely (breakout
+    // candle already too extended -> SL would be unreasonably wide).
+    private static final BigDecimal MAX_BREAKOUT_RISK_PERCENT = BigDecimal.valueOf(5.0);
+
+    // Obs 3: how many 15m candles immediately BEFORE the breakout candle
+    // are checked for consecutive movement in the breakout direction.
+    private static final int PRE_BREAKOUT_LOOKBACK_CANDLES = 2;
+
+    // Obs 3: position size multiplier applied when that consecutive
+    // pre-move pattern is detected (reduces size rather than skipping).
+    private static final BigDecimal REDUCED_SIZE_MULTIPLIER = BigDecimal.valueOf(0.5);
+
+    // Obs 5: safety cap on same-day re-entry chain length, to prevent a
+    // pathological choppy day from looping indefinitely.
+    private static final int MAX_SAME_DAY_REENTRIES = 5;
+
+    private final DeltaApiService deltaApiService;
+
     private BigDecimal[] computeCandleBodyRatioSeries(List<Candle> candles) {
 
         BigDecimal[] ratios = new BigDecimal[candles.size()];
@@ -85,11 +125,7 @@ public class CryptoStrongCandleParameterSweepEngine {
 
         return ratios;
     }
-    /**
-     * Fetches data once per symbol, then runs every
-     * (bodyRatio x atr x volume x partialR x finalR) combination in memory.
-     * Results are sorted by combined (all-symbol) profit factor, descending.
-     */
+
     public List<ParameterCombinationResult> runSweep(
             List<String> symbols,
             LocalDate fromDate,
@@ -138,14 +174,6 @@ public class CryptoStrongCandleParameterSweepEngine {
         return results;
     }
 
-
-    /**
-     * Converts full sweep results into compact leaderboard rows - no trade
-     * lists, no per-symbol breakdown. Use this for API responses instead of
-     * returning ParameterCombinationResult directly (that includes every
-     * individual trade record per symbol per combo, which balloons fast:
-     * ~250 combos x 3 symbols x hundreds of trades = lakhs of rows).
-     */
     public List<ParameterSweepSummaryRow> toSummary(
             List<ParameterCombinationResult> results, int topN) {
 
@@ -162,11 +190,12 @@ public class CryptoStrongCandleParameterSweepEngine {
             summary.add(new ParameterSweepSummaryRow(
                     i + 1,
                     c.getBodyRatio(),
-                    //c.getBreakoutBodyRatio(),
+                    c.getBreakoutBodyRatio(),
                     c.getAtrMultiplier(),
                     c.getVolumeMultiplier(),
                     c.getPartialTargetR(),
                     c.getFinalTargetR(),
+                    c.getTimeBasedSlTrailCandles(),
                     rpt.getTotalTrades(),
                     rpt.getWinRate(),
                     rpt.getProfitFactor(),
@@ -177,7 +206,6 @@ public class CryptoStrongCandleParameterSweepEngine {
         return summary;
     }
 
-    /** Logs a compact leaderboard - call after runSweep(). */
     public void printSummary(List<ParameterCombinationResult> results) {
 
         log.info("=== Parameter Sweep Results (sorted by combined profit factor) ===");
@@ -187,12 +215,14 @@ public class CryptoStrongCandleParameterSweepEngine {
             CryptoStrongCandleBacktestReport rpt = r.getCombinedReport();
             ParameterCombination c = r.getCombination();
 
-            log.info("BODYx{} | ATRx{} | VOLx{} | PARTIALx{}R | FINALx{}R -> trades={}, winRate={}%, PF={}, netProfit={}, expectancy={}",
+            log.info("BODYx{} | BREAKOUTx{} | ATRx{} | VOLx{} | PARTIALx{}R | FINALx{}R | TRAILx{} -> trades={}, winRate={}%, PF={}, netProfit={}, expectancy={}",
                     c.getBodyRatio(),
+                    c.getBreakoutBodyRatio(),
                     c.getAtrMultiplier(),
                     c.getVolumeMultiplier(),
                     c.getPartialTargetR(),
                     c.getFinalTargetR(),
+                    c.getTimeBasedSlTrailCandles(),
                     rpt.getTotalTrades(),
                     rpt.getWinRate(),
                     rpt.getProfitFactor(),
@@ -206,19 +236,22 @@ public class CryptoStrongCandleParameterSweepEngine {
         List<ParameterCombination> combos = new ArrayList<>();
 
         for (BigDecimal bodyRatio : BODY_RATIOS) {
-            for (BigDecimal atrMult : ATR_SL_MULTIPLIERS) {
-                for (BigDecimal volMult : VOLUME_MULTIPLIERS) {
-                    for (BigDecimal partialR : PARTIAL_TARGET_RS) {
-                        for (BigDecimal finalR : FINAL_TARGET_RS) {
+            for (BigDecimal breakoutBodyRatio : BREAKOUT_BODY_RATIOS) {
+                for (BigDecimal atrMult : ATR_SL_MULTIPLIERS) {
+                    for (BigDecimal volMult : VOLUME_MULTIPLIERS) {
+                        for (BigDecimal partialR : PARTIAL_TARGET_RS) {
+                            for (BigDecimal finalR : FINAL_TARGET_RS) {
+                                for (Integer trailCandles : TIME_BASED_SL_TRAIL_CANDLES) {
 
-                            // Final target must sit beyond partial target,
-                            // otherwise the trade logic is nonsensical.
-                            if (finalR.compareTo(partialR) <= 0) {
-                                continue;
+                                    if (finalR.compareTo(partialR) <= 0) {
+                                        continue;
+                                    }
+
+                                    combos.add(new ParameterCombination(
+                                            bodyRatio, breakoutBodyRatio, atrMult, volMult,
+                                            partialR, finalR, trailCandles));
+                                }
                             }
-
-                            combos.add(new ParameterCombination(
-                                    bodyRatio, atrMult, volMult, partialR, finalR));
                         }
                     }
                 }
@@ -240,31 +273,60 @@ public class CryptoStrongCandleParameterSweepEngine {
         dailyCandles = dailyCandles == null ? new ArrayList<>() : new ArrayList<>(dailyCandles);
         dailyCandles.sort(Comparator.comparing(Candle::getOpenTime));
 
-        // Single bulk fetch for the ENTIRE 15m history - this is the fix.
-        // The old engine fetched 15m candles inside the per-day loop, which
-        // meant one API call per matching breakout day. Now it's one call
-        // per symbol, period, regardless of how many parameter combos run.
-        List<Candle> all15m = deltaApiService.get15mCandles(
+        List<Candle> all15m = fetchAll15mCandlesChunked(
                 symbol,
-                fromDate.minusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond(),
-                toDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond());
-
-        all15m = all15m == null ? new ArrayList<>() : new ArrayList<>(all15m);
-        all15m.sort(Comparator.comparing(Candle::getOpenTime));
+                fromDate.minusDays(1),
+                toDate.plusDays(1));
 
         BigDecimal[] atrSeries = computeATRSeries(all15m, ATR_PERIOD);
         BigDecimal[] avgVolumeSeries = computeAvgVolumeSeries(all15m, VOLUME_LOOKBACK);
+        BigDecimal[] breakoutBodyRatioSeries = computeCandleBodyRatioSeries(all15m);
 
-        // NOTE: body-ratio is no longer filtered here, since it's now a
-        // swept parameter. Every day with a valid direction is kept as a
-        // candidate, carrying its own actual bodyRatio value. Each combo
-        // filters candidates against its own threshold in findTradeForCombo.
         List<DailyCandidate> candidates = buildCandidates(dailyCandles, all15m, fromDate, toDate);
 
         log.info("{}: {} daily candles, {} 15m candles, {} directional candidates",
                 symbol, dailyCandles.size(), all15m.size(), candidates.size());
 
-        return new SymbolData(symbol, all15m, atrSeries, avgVolumeSeries, candidates);
+        return new SymbolData(symbol, all15m, atrSeries, avgVolumeSeries, breakoutBodyRatioSeries, candidates);
+    }
+
+    private List<Candle> fetchAll15mCandlesChunked(
+            String symbol,
+            LocalDate rangeStart,
+            LocalDate rangeEnd) {
+
+        TreeMap<Instant, Candle> byOpenTime = new TreeMap<>();
+
+        LocalDate chunkStart = rangeStart;
+        int chunkCount = 0;
+
+        while (!chunkStart.isAfter(rangeEnd)) {
+
+            LocalDate chunkEnd = chunkStart.plusDays(CANDLE_15M_CHUNK_DAYS);
+
+            if (chunkEnd.isAfter(rangeEnd)) {
+                chunkEnd = rangeEnd;
+            }
+
+            long chunkStartEpoch = chunkStart.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+            long chunkEndEpoch = chunkEnd.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+
+            List<Candle> chunk = deltaApiService.get15mCandles(symbol, chunkStartEpoch, chunkEndEpoch);
+            chunkCount++;
+
+            if (chunk != null) {
+                for (Candle c : chunk) {
+                    byOpenTime.put(c.getOpenTime(), c);
+                }
+            }
+
+            chunkStart = chunkEnd.isAfter(chunkStart) ? chunkEnd : chunkStart.plusDays(1);
+        }
+
+        log.info("{}: fetched {} 15m candles across {} chunked requests ({} to {})",
+                symbol, byOpenTime.size(), chunkCount, rangeStart, rangeEnd);
+
+        return new ArrayList<>(byOpenTime.values());
     }
 
     private List<DailyCandidate> buildCandidates(
@@ -295,9 +357,6 @@ public class CryptoStrongCandleParameterSweepEngine {
             BigDecimal body = previousDay.getClose().subtract(previousDay.getOpen()).abs();
             BigDecimal bodyRatio = body.divide(range, 4, RoundingMode.HALF_UP);
 
-            // NOTE: no threshold comparison here anymore - bodyRatio is
-            // stored on the candidate and filtered per-combo downstream.
-
             CryptoStrongCandleTradeRecord.Direction direction;
             int cmp = previousDay.getClose().compareTo(previousDay.getOpen());
 
@@ -316,7 +375,6 @@ public class CryptoStrongCandleParameterSweepEngine {
             int dayEndIndex = firstIndexAtOrAfter(all15m, dayEnd);
 
             if (dayStartIndex >= dayEndIndex) {
-                // No 15m candles available for this day - skip rather than fail.
                 continue;
             }
 
@@ -327,7 +385,6 @@ public class CryptoStrongCandleParameterSweepEngine {
         return candidates;
     }
 
-    /** Binary search: index of the first candle with openTime >= target. */
     private int firstIndexAtOrAfter(List<Candle> candles, Instant target) {
 
         int lo = 0;
@@ -347,11 +404,6 @@ public class CryptoStrongCandleParameterSweepEngine {
         return lo;
     }
 
-    /**
-     * atr[idx] = ATR(period) computed from candles [idx-period, idx-1],
-     * i.e. the ATR value usable when evaluating candles.get(idx) as a
-     * potential breakout candle. Null for indices without enough history.
-     */
     private BigDecimal[] computeATRSeries(List<Candle> candles, int period) {
 
         BigDecimal[] atr = new BigDecimal[candles.size()];
@@ -378,10 +430,6 @@ public class CryptoStrongCandleParameterSweepEngine {
         return atr;
     }
 
-    /**
-     * avgVolume[idx] = average volume over the `lookback` candles ending
-     * just before idx. Null for indices without enough history.
-     */
     private BigDecimal[] computeAvgVolumeSeries(List<Candle> candles, int lookback) {
 
         BigDecimal[] avg = new BigDecimal[candles.size()];
@@ -408,67 +456,142 @@ public class CryptoStrongCandleParameterSweepEngine {
 
         for (DailyCandidate candidate : data.getCandidates()) {
 
-            // Body-ratio threshold applied here since it's now swept.
             if (candidate.getBodyRatio().compareTo(combo.getBodyRatio()) < 0) {
                 continue;
             }
 
-            CryptoStrongCandleTradeRecord trade = findTradeForCombo(data, candidate, combo);
-
-            if (trade != null) {
-                trades.add(trade);
-            }
+            trades.addAll(findTradesForCombo(data, candidate, combo));
         }
 
         return CryptoStrongCandleBacktestReport.fromTrades(trades);
     }
 
-    private CryptoStrongCandleTradeRecord findTradeForCombo(
+    /**
+     * Replaces the old single-trade findTradeForCombo. Scans the candidate
+     * day for the primary breakout entry, then - per Obs 5 - keeps scanning
+     * the SAME day for chained re-entries whenever a leg exits via
+     * STOP_LOSS and a later candle closes beyond that leg's entry-candle
+     * high/low (in the breakout direction).
+     */
+    private List<CryptoStrongCandleTradeRecord> findTradesForCombo(
             SymbolData data,
             DailyCandidate candidate,
             ParameterCombination combo) {
 
+        List<CryptoStrongCandleTradeRecord> chain = new ArrayList<>();
         List<Candle> candles = data.getAll15m();
 
-        for (int i = candidate.getDayStartIndex(); i < candidate.getDayEndIndex(); i++) {
+        int dayEndExclusive = candidate.getDayEndIndex();
+        boolean isBullish = candidate.getDirection() == CryptoStrongCandleTradeRecord.Direction.BULLISH;
 
-            Candle candle = candles.get(i);
+        // reEntryLevel is null while scanning for the PRIMARY breakout.
+        // After a stop-out, it becomes that leg's entry-candle high (buy)
+        // or low (sell) - Obs 5's chaining reference.
+        BigDecimal reEntryLevel = null;
 
-            boolean breakout;
+        int scanIndex = candidate.getDayStartIndex();
 
-            if (candidate.getDirection() == CryptoStrongCandleTradeRecord.Direction.BULLISH) {
-                breakout = candle.getClose().compareTo(candidate.getPreviousDay().getHigh()) > 0;
-            } else {
-                breakout = candle.getClose().compareTo(candidate.getPreviousDay().getLow()) < 0;
+        while (scanIndex < dayEndExclusive && chain.size() <= MAX_SAME_DAY_REENTRIES) {
+
+            boolean isPrimaryScan = reEntryLevel == null;
+            Integer triggerIndex = null;
+
+            for (int i = scanIndex; i < dayEndExclusive; i++) {
+
+                Candle candle = candles.get(i);
+                boolean triggered;
+
+                if (isPrimaryScan) {
+                    triggered = isBullish
+                            ? candle.getClose().compareTo(candidate.getPreviousDay().getHigh()) > 0
+                            : candle.getClose().compareTo(candidate.getPreviousDay().getLow()) < 0;
+                } else {
+                    // Obs 5: re-entry triggers on a 15m CLOSE beyond the
+                    // previous leg's entry-candle extreme, same direction.
+                    triggered = isBullish
+                            ? candle.getClose().compareTo(reEntryLevel) > 0
+                            : candle.getClose().compareTo(reEntryLevel) < 0;
+                }
+
+                if (!triggered) {
+                    continue;
+                }
+
+                if (isPrimaryScan) {
+                    // Body/volume filters only screen the PRIMARY breakout,
+                    // per the original strategy - re-entries are reactive
+                    // and not re-screened against these.
+                    BigDecimal breakoutBodyRatio = data.getBreakoutBodyRatioSeries()[i];
+                    if (breakoutBodyRatio == null
+                            || breakoutBodyRatio.compareTo(combo.getBreakoutBodyRatio()) < 0) {
+                        continue;
+                    }
+
+                    BigDecimal avgVolume = data.getAvgVolumeSeries()[i];
+                    if (avgVolume == null || avgVolume.compareTo(BigDecimal.ZERO) == 0) {
+                        continue;
+                    }
+
+                    boolean volumeConfirmed = candle.getVolume()
+                            .compareTo(avgVolume.multiply(combo.getVolumeMultiplier())) > 0;
+                    if (!volumeConfirmed) {
+                        continue;
+                    }
+                }
+
+                BigDecimal atr = data.getAtrSeries()[i];
+                if (atr == null || atr.compareTo(BigDecimal.ZERO) == 0) {
+                    continue;
+                }
+
+                triggerIndex = i;
+                break;
             }
 
-            if (!breakout) {
-                continue;
+            if (triggerIndex == null) {
+                // No (re-)entry found for the rest of the day - chain ends.
+                break;
             }
 
-            BigDecimal avgVolume = data.getAvgVolumeSeries()[i];
+            int entryIndex = triggerIndex;
+            BigDecimal atr = data.getAtrSeries()[entryIndex];
+            Candle entryCandle = candles.get(entryIndex);
+            int reEntrySequence = chain.size();
 
-            if (avgVolume == null || avgVolume.compareTo(BigDecimal.ZERO) == 0) {
-                continue;
+            CryptoStrongCandleTradeRecord trade = simulateTrade(
+                    data.getSymbol(), candidate, entryCandle, entryIndex, atr, combo, candles,
+                    reEntrySequence, isPrimaryScan);
+
+            if (trade == null) {
+                // Obs 2 rejected this entry (extended breakout candle), or
+                // degenerate zero risk. For the primary scan this means no
+                // trade at all for this candidate. For a re-entry scan we
+                // just stop the chain here.
+                break;
             }
 
-            boolean volumeConfirmed = candle.getVolume()
-                    .compareTo(avgVolume.multiply(combo.getVolumeMultiplier())) > 0;
+            chain.add(trade);
 
-            if (!volumeConfirmed) {
-                continue;
+            if (trade.getExitReason() != CryptoStrongCandleTradeRecord.ExitReason.STOP_LOSS) {
+                // Obs 5 only chains after a stop-loss exit.
+                break;
             }
 
-            BigDecimal atr = data.getAtrSeries()[i];
+            int exitIndex = Math.min(candles.size() - 1, entryIndex + trade.getCandlesHeld());
 
-            if (atr == null || atr.compareTo(BigDecimal.ZERO) == 0) {
-                continue;
+            if (exitIndex >= dayEndExclusive - 1) {
+                // Stopped out at/after day end - no room left for a
+                // same-day re-entry.
+                break;
             }
 
-            return simulateTrade(data.getSymbol(), candidate, candle, i, atr, combo, candles);
+            // Next reference level = the entry candle's own high/low, per
+            // "note down the high/low of the candle" in Obs 5.
+            reEntryLevel = isBullish ? trade.getBreakoutHigh() : trade.getBreakoutLow();
+            scanIndex = exitIndex + 1;
         }
 
-        return null;
+        return chain;
     }
 
     private CryptoStrongCandleTradeRecord simulateTrade(
@@ -479,7 +602,9 @@ public class CryptoStrongCandleParameterSweepEngine {
             int startIndex,
             BigDecimal atr,
             ParameterCombination combo,
-            List<Candle> candles) {
+            List<Candle> candles,
+            int reEntrySequence,
+            boolean isPrimaryEntry) {
 
         CryptoStrongCandleTradeRecord.Direction direction = candidate.getDirection();
         Candle previousDay = candidate.getPreviousDay();
@@ -489,9 +614,10 @@ public class CryptoStrongCandleParameterSweepEngine {
         BigDecimal partialTargetR = combo.getPartialTargetR();
         BigDecimal finalTargetR = combo.getFinalTargetR();
 
-        // Trades are bounded to the same day-plus-one window the original
-        // engine used (it fetched tradeDate -> tradeDate+1 per day).
-        int boundIndexExclusive = candidate.getDayEndIndex();
+        // NOTE (left exactly as you asked - you're handling this bound
+        // separately): trade duration is not capped to the candidate's
+        // day window here.
+        int boundIndexExclusive = candles.size();
 
         BigDecimal entry = breakoutCandle.getClose();
         BigDecimal atrBuffer = atr.multiply(combo.getAtrMultiplier());
@@ -510,6 +636,50 @@ public class CryptoStrongCandleParameterSweepEngine {
             return null;
         }
 
+        // ---- Obs 2: skip primary entries where the breakout candle is
+        // already too extended (ATR-based risk too large relative to
+        // entry price). Re-entries are NOT re-screened against this. ----
+        if (isPrimaryEntry) {
+            BigDecimal riskPercent = risk.divide(entry, 6, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100));
+
+            if (riskPercent.compareTo(MAX_BREAKOUT_RISK_PERCENT) > 0) {
+                return null;
+            }
+        }
+
+        // ---- Obs 3: reduce size when prior candles already show
+        // consecutive movement in the breakout direction before the
+        // breakout candle. Only checked for the primary entry. ----
+        BigDecimal sizeMultiplier = BigDecimal.ONE;
+        boolean consecutiveMoveDetected = false;
+
+        if (isPrimaryEntry && startIndex >= PRE_BREAKOUT_LOOKBACK_CANDLES) {
+
+            consecutiveMoveDetected = true;
+            BigDecimal prevClose = breakoutCandle.getClose();
+
+            for (int back = 1; back <= PRE_BREAKOUT_LOOKBACK_CANDLES; back++) {
+
+                Candle earlier = candles.get(startIndex - back);
+
+                boolean continuesMove = direction == CryptoStrongCandleTradeRecord.Direction.BULLISH
+                        ? earlier.getClose().compareTo(prevClose) < 0   // each step back was lower -> rising into breakout
+                        : earlier.getClose().compareTo(prevClose) > 0;  // each step back was higher -> falling into breakout
+
+                if (!continuesMove) {
+                    consecutiveMoveDetected = false;
+                    break;
+                }
+
+                prevClose = earlier.getClose();
+            }
+
+            if (consecutiveMoveDetected) {
+                sizeMultiplier = REDUCED_SIZE_MULTIPLIER;
+            }
+        }
+
         BigDecimal targetPartial;
         BigDecimal targetFinal;
 
@@ -523,6 +693,7 @@ public class CryptoStrongCandleParameterSweepEngine {
 
         boolean partialBooked = false;
         boolean breakEvenActivated = false;
+        boolean slTrailApplied = false;
 
         BigDecimal finalExitPrice = entry;
         BigDecimal partialExitPrice = null;
@@ -531,12 +702,45 @@ public class CryptoStrongCandleParameterSweepEngine {
                 CryptoStrongCandleTradeRecord.ExitReason.END_OF_DATA;
 
         int candlesHeld = 0;
+        int trailWindowCandles = combo.getTimeBasedSlTrailCandles();
 
         for (int i = startIndex + 1; i < boundIndexExclusive; i++) {
 
             Candle candle = candles.get(i);
 
             candlesHeld++;
+
+            // ---- Obs 1: time-based SL trailing. Once exactly N candles
+            // (excluding the breakout candle) have elapsed without the
+            // partial target being hit, tighten SL to the extreme of that
+            // window (excluding the breakout candle). Applied at most once
+            // per trade, and skipped if breakeven has already kicked in. ----
+            if (!slTrailApplied && !partialBooked && !breakEvenActivated
+                    && candlesHeld == trailWindowCandles) {
+
+                BigDecimal windowExtreme = null;
+
+                for (int w = startIndex + 1; w <= i; w++) {
+
+                    Candle windowCandle = candles.get(w);
+
+                    if (direction == CryptoStrongCandleTradeRecord.Direction.BULLISH) {
+                        if (windowExtreme == null || windowCandle.getLow().compareTo(windowExtreme) < 0) {
+                            windowExtreme = windowCandle.getLow();
+                        }
+                    } else {
+                        if (windowExtreme == null || windowCandle.getHigh().compareTo(windowExtreme) > 0) {
+                            windowExtreme = windowCandle.getHigh();
+                        }
+                    }
+                }
+
+                if (windowExtreme != null) {
+                    stopLoss = windowExtreme;
+                }
+
+                slTrailApplied = true;
+            }
 
             if (direction == CryptoStrongCandleTradeRecord.Direction.BULLISH) {
 
@@ -624,10 +828,19 @@ public class CryptoStrongCandleParameterSweepEngine {
 
         pnlR = pnlPoints.divide(risk, 4, RoundingMode.HALF_UP);
 
+        // Obs 3: pnlR stays a pure per-unit-risk measure (unaffected by
+        // size), but pnlPoints - which feeds netProfit-style aggregates -
+        // is scaled down for reduced-size entries.
+        pnlPoints = pnlPoints.multiply(sizeMultiplier);
+
+        // MFE/MAE bounded to the trade's own holding period, NOT the full
+        // series - this was the runaway-cost bug from before.
+        int mfeMaeBound = Math.min(boundIndexExclusive, startIndex + candlesHeld + 1);
+
         BigDecimal mfe = BigDecimal.ZERO;
         BigDecimal mae = BigDecimal.ZERO;
 
-        for (int i = startIndex; i < boundIndexExclusive; i++) {
+        for (int i = startIndex; i < mfeMaeBound; i++) {
 
             Candle c = candles.get(i);
 
@@ -679,6 +892,11 @@ public class CryptoStrongCandleParameterSweepEngine {
                 .mae(mae)
                 .candlesHeld(candlesHeld)
                 .breakEvenActivated(breakEvenActivated)
+                // ---- new fields - add these to the model/builder ----
+                .reEntrySequence(reEntrySequence)
+                .positionSizeMultiplier(sizeMultiplier)
+                .consecutiveMoveDetected(consecutiveMoveDetected)
+                .slTrailApplied(slTrailApplied)
                 .build();
     }
 
@@ -691,7 +909,7 @@ public class CryptoStrongCandleParameterSweepEngine {
         private final List<Candle> all15m;
         private final BigDecimal[] atrSeries;
         private final BigDecimal[] avgVolumeSeries;
-
+        private final BigDecimal[] breakoutBodyRatioSeries;
         private final List<DailyCandidate> candidates;
     }
 
@@ -710,10 +928,12 @@ public class CryptoStrongCandleParameterSweepEngine {
     @AllArgsConstructor
     public static class ParameterCombination {
         private final BigDecimal bodyRatio;
+        private final BigDecimal breakoutBodyRatio;
         private final BigDecimal atrMultiplier;
         private final BigDecimal volumeMultiplier;
         private final BigDecimal partialTargetR;
         private final BigDecimal finalTargetR;
+        private final Integer timeBasedSlTrailCandles;
     }
 
     @Getter
@@ -729,11 +949,12 @@ public class CryptoStrongCandleParameterSweepEngine {
     public static class ParameterSweepSummaryRow {
         private final int rank;
         private final BigDecimal bodyRatio;
-        //private final BigDecimal breakoutBodyRatio;
+        private final BigDecimal breakoutBodyRatio;
         private final BigDecimal atrMultiplier;
         private final BigDecimal volumeMultiplier;
         private final BigDecimal partialTargetR;
         private final BigDecimal finalTargetR;
+        private final Integer timeBasedSlTrailCandles;
         private final int trades;
         private final BigDecimal winRate;
         private final BigDecimal profitFactor;

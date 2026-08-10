@@ -5,6 +5,11 @@
 orb:
   instruments-csv-path: classpath:ind_nifty500list.csv
 
+# Completed 15-minute candles used by the gap-breakout strategy are persisted
+# here and reused by later backtests and parameter sweeps.
+gap-breakout:
+  cache-directory: cache/gap-breakout-candles
+
 backtest:
   requests-per-second: 20
   thread-pool-size: 10

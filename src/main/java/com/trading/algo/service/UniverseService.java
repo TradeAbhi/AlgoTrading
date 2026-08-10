@@ -105,6 +105,23 @@ public class UniverseService {
         "SBIN",       "BAJAJFINSV",  "BHARTIARTL",  "MARUTI",      "KOTAKBANK"
     );
 
+    /**
+     * Full Nifty 50 universe used exclusively for gap-up breakout analysis.
+     * Keep this list aligned with the semi-annual Nifty 50 index rebalances.
+     */
+    public static final List<String> NIFTY_50_GAP_BREAKOUT = List.of(
+        "ADANIENT",   "ADANIPORTS",  "APOLLOHOSP",  "ASIANPAINT",  "AXISBANK",
+        "BAJAJ-AUTO", "BAJFINANCE",  "BAJAJFINSV",  "BPCL",        "BHARTIARTL",
+        "BRITANNIA",  "CIPLA",       "COALINDIA",   "DIVISLAB",    "DRREDDY",
+        "EICHERMOT",  "GRASIM",      "HCLTECH",     "HDFCBANK",    "HDFCLIFE",
+        "HEROMOTOCO", "HINDALCO",    "HINDUNILVR",  "ICICIBANK",   "ITC",
+        "INDUSINDBK", "INFY",        "JSWSTEEL",    "KOTAKBANK",   "LT",
+        "LTIM",       "M&M",         "MARUTI",      "NESTLEIND",   "NTPC",
+        "ONGC",       "POWERGRID",   "RELIANCE",    "SBILIFE",     "SBIN",
+        "SUNPHARMA",  "TATACONSUM",  "TATAMOTORS",  "TATASTEEL",   "TCS",
+        "TECHM",      "TITAN",       "ULTRACEMCO",  "WIPRO",       "ZOMATO"
+    );
+
     // =========================================================================
 
     @PostConstruct

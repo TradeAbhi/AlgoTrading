@@ -118,6 +118,13 @@ public class IpoBacktestTrade {
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
+    // Add two new Outcome enum values:
+
+
+    // Add two new fields + builder support:
+    private Double weeklyRiseFromBottomPercent;
+    private Double weeklyHighestHighLast10;
+
     // ── Enums ─────────────────────────────────────────────────────────────
 
     public enum Outcome {
@@ -126,6 +133,9 @@ public class IpoBacktestTrade {
         SL_HIT,           // Stop loss hit (before any target)
         SL_HIT_TRAILED,   // Stop loss hit after trailing to breakeven
         EOD_EXIT,         // Neither hit by market close
+
+        REJECTION_VOLUME_EXIT,
+        COMBINED_REJECTION_EXIT,
         NO_BREAKOUT       // No breakout occurred during backtest period
     }
 }

@@ -167,6 +167,61 @@ public class EarningsWindowFiboService {
         pendingBreakoutDate = null;
     }
 
+    /**
+     * End-of-day summary alert at 3:31 PM Monday-Friday
+     * Shows all setups, triggered breakouts, and pending setups for the day
+     */
+    @Scheduled(cron = "0 31 15 * * MON-FRI", zone = "Asia/Kolkata")
+    public void sendEndOfDaySummary() {
+        LocalDate today = LocalDate.now();
+        log.info("Earnings Window Fibonacci end-of-day summary — date={}", today);
+
+        // Calculate earnings window
+        LocalDate windowStart = today.minusDays(PRE_EARNINGS_DAYS);
+        LocalDate windowEnd = today.plusDays(POST_EARNINGS_DAYS);
+
+        // Get symbols with earnings in the window
+        List<String> earningsSymbols = earningsRepository.findSymbolsInEarningsWindow(windowStart, windowEnd);
+
+        if (earningsSymbols.isEmpty()) {
+            log.info("No symbols in earnings window for EOD summary");
+            return;
+        }
+
+        // Filter to F&O symbols only
+        List<String> fnoSymbols = earningsSymbols.stream()
+                .filter(UniverseService.NIFTY_FNO_SYMBOLS::contains)
+                .distinct()
+                .collect(Collectors.toList());
+
+        if (fnoSymbols.isEmpty()) {
+            log.info("No F&O symbols in earnings window for EOD summary");
+            return;
+        }
+
+        // Resolve symbols to instrument keys
+        Map<String, String> symbolKeyMap = instrumentMaster.resolveToInstrumentKeyMap(fnoSymbols);
+
+        // Scan for final day status
+        CopyOnWriteArrayList<BacktestTrade> finalSignals = new CopyOnWriteArrayList<>();
+        CopyOnWriteArrayList<DayOutcome> outcomes = new CopyOnWriteArrayList<>();
+
+        ExecutorService pool = Executors.newFixedThreadPool(config.getThreadPoolSize());
+        try {
+            List<java.util.concurrent.CompletableFuture<Void>> futures = symbolKeyMap.entrySet().stream()
+                    .map(entry -> java.util.concurrent.CompletableFuture.runAsync(() ->
+                            scanSymbolForEOD(entry.getKey(), entry.getValue(), today, finalSignals, outcomes), pool))
+                    .collect(Collectors.toList());
+            java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();
+        } finally {
+            pool.shutdown();
+            try { pool.awaitTermination(5, TimeUnit.MINUTES); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+
+        sendEODSummaryAlert(finalSignals, outcomes, today, windowStart, windowEnd);
+    }
+
     private void registerPendingBreakouts(LocalDate today, List<BacktestTrade> signals,
                                           Map<String, String> symbolKeyMap) {
         if (!today.equals(pendingBreakoutDate)) {
@@ -238,21 +293,107 @@ public class EarningsWindowFiboService {
             }
 
             // Run the strategy logic
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, today, candles);
+            List<BacktestTrade> trades = strategy.evaluate(symbol, today, candles);
 
-            if (trade.isPresent()) {
-                signals.add(trade.get());
+            trades.forEach(t -> {
+                signals.add(t);
                 log.info("  🔔 EARNINGS WINDOW FIBO SIGNAL: {} {} Entry={} SL={} Target={}",
                         symbol,
-                        trade.get().getDirection(),
-                        String.format("%.2f", trade.get().getEntryPrice()),
-                        String.format("%.2f", trade.get().getStopLoss()),
-                        String.format("%.2f", trade.get().getTarget()));
-            }
+                        t.getDirection(),
+                        String.format("%.2f", t.getEntryPrice()),
+                        String.format("%.2f", t.getStopLoss()),
+                        String.format("%.2f", t.getTarget()));
+            });
 
         } catch (Exception e) {
             log.error("Earnings Window Fibo scan error for {}: {}", symbol, e.getMessage());
         }
+    }
+
+    /** Scan one earnings-window symbol and record its final end-of-day outcome. */
+    private void scanSymbolForEOD(String symbol, String instrumentKey, LocalDate today,
+                                  CopyOnWriteArrayList<BacktestTrade> signals,
+                                  CopyOnWriteArrayList<DayOutcome> outcomes) {
+        try {
+            List<Candle> candles = candleService.fetchDayCandles(instrumentKey, today);
+            if (candles.isEmpty()) {
+                return;
+            }
+
+            boolean hasC1 = candles.stream().anyMatch(c -> c.getTimestamp().toLocalTime().equals(C1_TIME));
+            boolean hasC2 = candles.stream().anyMatch(c -> c.getTimestamp().toLocalTime().equals(C2_TIME));
+            if (!hasC1 || !hasC2) {
+                return;
+            }
+
+            List<BacktestTrade> trades = strategy.evaluate(symbol, today, candles);
+            if (trades.isEmpty()) {
+                return;
+            }
+
+            BacktestTrade setup = trades.get(0);
+            signals.add(setup);
+            double breakoutLevel = setup.getDirection() == BacktestTrade.Direction.BUY
+                    ? Math.max(setup.getC1High(), setup.getC2High())
+                    : Math.min(setup.getC1Low(), setup.getC2Low());
+            Candle lastCandle = candles.stream().max(Comparator.comparing(Candle::getTimestamp)).orElse(null);
+            if (lastCandle == null) {
+                return;
+            }
+
+            boolean breakoutTriggered = setup.getDirection() == BacktestTrade.Direction.BUY
+                    ? lastCandle.getClose() > breakoutLevel
+                    : lastCandle.getClose() < breakoutLevel;
+            double highOfDay = candles.stream().mapToDouble(Candle::getHigh).max().orElse(0);
+            double lowOfDay = candles.stream().mapToDouble(Candle::getLow).min().orElse(0);
+            outcomes.add(new DayOutcome(symbol, setup.getDirection(), setup.getEntryPrice(),
+                    setup.getStopLoss(), setup.getTarget(), breakoutLevel, breakoutTriggered,
+                    highOfDay, lowOfDay, lastCandle.getClose()));
+        } catch (Exception e) {
+            log.error("Earnings Window Fibo EOD scan error for {}: {}", symbol, e.getMessage());
+        }
+    }
+
+    /** Send the final daily status of earnings-window Fibonacci setups. */
+    private void sendEODSummaryAlert(List<BacktestTrade> signals, List<DayOutcome> outcomes,
+                                     LocalDate today, LocalDate windowStart, LocalDate windowEnd) {
+        List<DayOutcome> triggered = outcomes.stream().filter(DayOutcome::breakoutTriggered).toList();
+        List<DayOutcome> pending = outcomes.stream().filter(outcome -> !outcome.breakoutTriggered()).toList();
+
+        StringBuilder message = new StringBuilder();
+        message.append("📊 *Earnings Window Fibonacci - End of Day Summary*\n")
+                .append("📅 ").append(today).append("\n")
+                .append("🎯 Window: ").append(windowStart).append(" to ").append(windowEnd).append("\n")
+                .append("━━━━━━━━━━━━━━━━━━━━\n\n");
+        appendEODOutcomes(message, "✅ *Triggered Breakouts*", triggered);
+        appendEODOutcomes(message, "⏳ *Pending Setups*", pending);
+        if (outcomes.isEmpty()) {
+            message.append("_No Fibonacci setups identified today._\n\n");
+        }
+        message.append("━━━━━━━━━━━━━━━━━━━━\n")
+                .append("Total setups: ").append(signals.size())
+                .append(" | Triggered: ").append(triggered.size())
+                .append(" | Pending: ").append(pending.size());
+        telegramService.sendMessage(message.toString());
+        log.info("Earnings Window Fibonacci EOD summary sent — {} setups", signals.size());
+    }
+
+    private void appendEODOutcomes(StringBuilder message, String heading, List<DayOutcome> outcomes) {
+        if (outcomes.isEmpty()) {
+            return;
+        }
+        message.append(heading).append(" (").append(outcomes.size()).append(")\n");
+        outcomes.stream().sorted(Comparator.comparing(DayOutcome::symbol))
+                .forEach(outcome -> message.append(formatEODOutcome(outcome)));
+        message.append('\n');
+    }
+
+    private String formatEODOutcome(DayOutcome outcome) {
+        String direction = outcome.direction() == BacktestTrade.Direction.BUY ? "🟢 BUY" : "🔴 SELL";
+        return String.format("`%-12s` %s\n  Entry: %.2f | Close: %.2f | Breakout: %.2f\n"
+                        + "  High: %.2f | Low: %.2f | SL: %.2f | Target: %.2f\n",
+                outcome.symbol(), direction, outcome.entryPrice(), outcome.closeOfDay(), outcome.breakoutLevel(),
+                outcome.highOfDay(), outcome.lowOfDay(), outcome.stopLoss(), outcome.target());
     }
 
     /**
@@ -396,6 +537,11 @@ public class EarningsWindowFiboService {
     }
 
     private record PendingBreakout(String instrumentKey, BacktestTrade setup) { }
+
+    private record DayOutcome(String symbol, BacktestTrade.Direction direction, double entryPrice,
+                              double stopLoss, double target, double breakoutLevel,
+                              boolean breakoutTriggered, double highOfDay, double lowOfDay,
+                              double closeOfDay) { }
 
     private record TriggeredBreakout(String symbol, BacktestTrade.Direction direction, double entryPrice,
                                     double breakoutLevel, double stopLoss, double target,

@@ -1,5 +1,6 @@
 package com.trading.algo.entity;
 
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -23,6 +24,23 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonPropertyOrder({
+    "symbol", "tradeDate", "direction",
+    "entryPrice", "exitPrice", "stopLoss", "initialStopLoss", "target",
+    "c1Volume", "c2Volume",
+    "c1Open", "c1High", "c1Low", "c1Close", "c1WickRatio",
+    "c2Open", "c2High", "c2Low", "c2Close",
+    "riskPoints", "rewardPoints",
+    "outcome", "pnlPoints", "pnlPercent", "actualRR",
+    "quantity", "riskRupees", "pnlRupees",
+    "volumeFlag", "exitCandleTime", "pm3Price",
+    "prevDayOpen", "prevDayHigh", "prevDayLow", "prevDayClose",
+    "c3Open", "c3High", "c3Low", "c3Close",
+    "c1AbovePrevHigh", "c1AbovePrevLow",
+    "slTrailedToBreakeven", "createdAt",
+    "boOpen", "boHigh", "boLow", "boClose", "boTime",
+    "reEntrySequence", "positionSizeMultiplier", "reEntryTriggerLevel"
+})
 public class BacktestTrade {
 
     @Id
@@ -50,7 +68,8 @@ public class BacktestTrade {
 
     // ── Trade levels ──────────────────────────────────────────────────────
     private double entryPrice;
-    private double stopLoss;
+    private double stopLoss;       // Final stop loss (may be trailed)
+    private double initialStopLoss; // Initial stop loss at trade entry
     private double target;
     private double riskPoints;     // entry - SL (absolute)
     private double rewardPoints;   // target - entry (absolute)
@@ -107,6 +126,13 @@ public class BacktestTrade {
     @Column(name = "c1_volume")
     private Long c1Volume;
 
+    /** C2 candle volume */
+    private long c2Volume;
+
+    /** Price at 3:00 PM - used to analyze end of day price in backtest */
+    @Column(name = "pm_3_price", columnDefinition = "DECIMAL(10,2)")
+    private Double pm3Price;
+
     @Column(name = "exit_candle_time")
     private LocalDateTime exitCandleTime;
 
@@ -149,8 +175,19 @@ public class BacktestTrade {
     @Builder.Default
     private Boolean c1AbovePrevLow = false;
 
+    /** True if stop loss was trailed to breakeven after hitting partial target (1.5R) */
+    @Column(name = "sl_trailed_to_breakeven")
+    @Builder.Default
+    private Boolean slTrailedToBreakeven = false;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    private double boOpen, boHigh, boLow, boClose;
+    private LocalDateTime boTime;
+    private int reEntrySequence;           // 0 = primary, 1 = the one allowed re-entry
+    private double positionSizeMultiplier; // 1.0 normal, 0.5 when Rule 5's condition applied
+    private Double reEntryTriggerLevel;       // null for primary; the failure-extreme level that triggered the re-entry
 
     // ── Enums ─────────────────────────────────────────────────────────────
 

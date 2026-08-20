@@ -43,6 +43,7 @@ public class SchedulerService {
     private final com.trading.algo.fibostrategy.WatchlistFiboService watchlistFiboService;
     private final com.trading.algo.earning.EarningsWindowFiboService earningsWindowFiboService;
     private final GapBreakoutService gapBreakoutService;
+    private final IpoGmpRedirectService ipoGmpRedirectService;
 
     // =========================================================================
     // EARNINGS — fetch & save (DO NOT TOUCH)
@@ -560,5 +561,40 @@ public class SchedulerService {
          } catch (Exception e) {
              log.error("Gap Breakout scanner error at {}: {}", now, e.getMessage(), e);
          }
+     }
+
+     // =========================================================================
+     // IPO GMP REDIRECT — scheduled redirect to IPO GMP URL
+     // =========================================================================
+
+     /**
+      * Redirect to IPO GMP live report page
+      * Runs daily at 10:00 AM IST
+      * Access the URL: https://www.investorgain.com/report/ipo-gmp-live/331/?filter=ipo
+      */
+     @Scheduled(cron = "0 0 10 * * *", zone = "Asia/Kolkata")
+     public void ipoGmpRedirect() {
+         log.info("IPO GMP redirect scheduler fired — 10:00 AM");
+         ipoGmpRedirectService.triggerRedirect();
+     }
+
+     // =========================================================================
+     // IPO MANDATE REMINDER — reminder to accept mandates for applied IPOs
+     // =========================================================================
+
+     /**
+      * Reminder to check if mandates have been accepted for IPO applications
+      * Runs daily at 11:00 AM IST
+      */
+     @Scheduled(cron = "0 0 11 * * *", zone = "Asia/Kolkata")
+     public void ipoMandateReminder() {
+         log.info("IPO mandate reminder scheduler fired — 11:00 AM");
+         StringBuilder sb = new StringBuilder();
+         sb.append("🔔 *IPO Mandate Reminder*\n");
+         sb.append("━━━━━━━━━━━━━━━━━━━━\n");
+         sb.append("Have you accepted the mandate for the IPOs you applied for?\n\n");
+         sb.append("📋 Check your UPI app for pending mandate approvals\n");
+         sb.append("━━━━━━━━━━━━━━━━━━━━");
+         telegramService.sendMessage(sb.toString());
      }
 }

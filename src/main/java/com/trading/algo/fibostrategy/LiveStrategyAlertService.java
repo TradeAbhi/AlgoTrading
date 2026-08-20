@@ -160,7 +160,8 @@ public class LiveStrategyAlertService {
         // Breadth is the final filter, after the Fibonacci filter has created
         // candidates from the momentum snapshot.
         int fibonacciCandidateCount = signals.size();
-        double adRatio = fetchAdRatio();
+        // double adRatio = fetchAdRatio();
+        double adRatio = -1.0;
         List<BacktestTrade> adFilteredSignals = signals.stream()
                 .filter(signal -> momentumStockSnapshotService.isTradeDirectionAllowed(
                         adRatio, signal.getDirection().name()))
@@ -314,17 +315,17 @@ public class LiveStrategyAlertService {
                 }
 
                 // Reuse same strategy — pass displayName as symbol for logging
-                Optional<BacktestTrade> trade = strategy.evaluate(index.displayName, today, candles);
+                List<BacktestTrade> trades = strategy.evaluate(index.displayName, today, candles);
 
-                if (trade.isPresent()) {
-                    indexSignals.add(trade.get());
+                trades.forEach(t -> {
+                    indexSignals.add(t);
                     log.info("  🔔 INDEX SIGNAL: {} {} Entry={} SL={} Target={}",
                             index.displayName,
-                            trade.get().getDirection(),
-                            String.format("%.2f", trade.get().getEntryPrice()),
-                            String.format("%.2f", trade.get().getStopLoss()),
-                            String.format("%.2f", trade.get().getTarget()));
-                }
+                            t.getDirection(),
+                            String.format("%.2f", t.getEntryPrice()),
+                            String.format("%.2f", t.getStopLoss()),
+                            String.format("%.2f", t.getTarget()));
+                });
 
             } catch (Exception e) {
                 log.error("Error scanning index {} live: {}", index.displayName, e.getMessage());
@@ -366,19 +367,19 @@ public class LiveStrategyAlertService {
             Double prevDayClose = prevDay.isEmpty() ? null : prevDay.get(prevDay.size() - 1).getClose();
             Double prevDayOpen  = prevDay.isEmpty() ? null : prevDay.get(prevDay.size() - 1).getOpen();
 
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, today, candles, -1.0, 0.0, 0,
+            List<BacktestTrade> trades = strategy.evaluate(symbol, today, candles, -1.0, 0.0, 0,
                     config.getFixedRiskRupees(), prevDayOpen, prevDayHigh, prevDayLow, prevDayClose,
                     0.0, 0.0, 0.0, 0.0);
 
-            if (trade.isPresent()) {
-                signals.add(trade.get());
+            trades.forEach(t -> {
+                signals.add(t);
                 log.info("  🔔 LIVE SIGNAL: {} {} Entry={} SL={} Target={}",
                         symbol,
-                        trade.get().getDirection(),
-                        String.format("%.2f", trade.get().getEntryPrice()),
-                        String.format("%.2f", trade.get().getStopLoss()),
-                        String.format("%.2f", trade.get().getTarget()));
-            }
+                        t.getDirection(),
+                        String.format("%.2f", t.getEntryPrice()),
+                        String.format("%.2f", t.getStopLoss()),
+                        String.format("%.2f", t.getTarget()));
+            });
 
         } catch (Exception e) {
             log.error("Error scanning {} live: {}", symbol, e.getMessage());

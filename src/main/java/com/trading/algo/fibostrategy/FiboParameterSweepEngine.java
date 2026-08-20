@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,12 +42,13 @@ public class FiboParameterSweepEngine {
     private final BacktestConfig config;
 
     // Dynamic parameters to sweep
-    private static final List<Double> MIN_WICK_RATIOS = List.of(0.60, 0.65, 0.70, 0.75);
-    private static final List<Double> TARGET_RRS = List.of(2.0, 2.5, 3.0, 3.5);
-    private static final List<Double> PARTIAL_EXIT_RRS = List.of(1.0, 1.5, 2.0);
+    private static final List<Double> MIN_WICK_RATIOS = List.of(0.60, 0.65, 0.75);
+    private static final List<Double> TARGET_RRS = List.of(2.0, 2.5, 3.0);
+    private static final List<Double> PARTIAL_EXIT_RRS = List.of(1.5, 2.0,2.5);
     private static final List<Double> MIN_C1_ATR_RATIOS = List.of(0.4, 0.5, 0.6);
-    private static final List<Double> MIN_C1_VOLUME_MULTIPLIERS = List.of(1.2, 1.3, 1.5, 1.8);
+    private static final List<Double> MIN_C1_VOLUME_MULTIPLIERS = List.of(1.2, 1.5, 1.8);
     private static final List<Double> SL_MARGIN_PERCENTS = List.of(0.3, 0.45, 0.6);
+    private static final List<Integer> TIME_BASED_SL_TRAIL_CANDLES = List.of(8, 10, 12);
 
     /**
      * Run parameter sweep for given symbols and date range.
@@ -61,6 +63,8 @@ public class FiboParameterSweepEngine {
         // before touching the combo grid at all. ----
         Map<String, Map<LocalDate, List<Candle>>> candleCache =
                 buildCandleCache(symbolKeyMap, fromDate, toDate);
+        Map<String, Map<LocalDate, PreviousDayOhlc>> previousDayCache =
+                buildPreviousDayCache(symbolKeyMap, candleCache, fromDate, toDate);
 
         List<ParameterCombination> combinations = buildParameterCombinations();
         log.info("Testing {} parameter combinations against pre-fetched candle cache " +
@@ -70,9 +74,9 @@ public class FiboParameterSweepEngine {
         List<CombinationResult> results = new ArrayList<>();
 
         for (ParameterCombination combo : combinations) {
-            log.info("Testing combo: wickRatio={} targetRR={} partialRR={} atrRatio={} volMult={} slMargin={}%",
+            log.info("Testing combo: wickRatio={} targetRR={} partialRR={} atrRatio={} volMult={} slMargin={}% trailCandles={}",
                     combo.minWickRatio, combo.targetRR, combo.partialExitRR,
-                    combo.minC1AtrRatio, combo.minC1VolumeMultiplier, combo.slMarginPercent);
+                    combo.minC1AtrRatio, combo.minC1VolumeMultiplier, combo.slMarginPercent, combo.timeBasedSlTrailCandles);
 
             List<BacktestTrade> allTrades = new ArrayList<>();
 
@@ -80,7 +84,7 @@ public class FiboParameterSweepEngine {
                 String symbol = entry.getKey();
 
                 List<BacktestTrade> symbolTrades = evaluateSymbolForCombo(
-                        symbol, candleCache.get(symbol), combo);
+                        symbol, candleCache.get(symbol), previousDayCache.get(symbol), combo);
                 allTrades.addAll(symbolTrades);
             }
 
@@ -116,15 +120,45 @@ public class FiboParameterSweepEngine {
                     c.minC1AtrRatio,
                     c.minC1VolumeMultiplier,
                     c.slMarginPercent,
+                    c.timeBasedSlTrailCandles,
                     r.totalTrades,
                     r.wins,
                     r.losses,
                     r.winRate,
                     r.profitFactor,
-                    r.avgR));
+                    r.avgR,
+                    r.categoryPerformance));
         }
 
         return summary;
+    }
+
+    /**
+     * Returns the best parameter combinations for one prior-day category.
+     * Combinations with no trades in the requested category are excluded.
+     */
+    public List<ParameterSweepSummaryRow> toCategorySummary(List<CombinationResult> results,
+                                                              FiboPreviousDayCategory category, int topN) {
+        List<CombinationResult> ranked = results.stream()
+                .filter(result -> result.categoryPerformance.get(category).totalTrades() > 0)
+                .sorted((left, right) -> Double.compare(
+                        right.categoryPerformance.get(category).profitFactor(),
+                        left.categoryPerformance.get(category).profitFactor()))
+                .limit(topN)
+                .toList();
+        List<ParameterSweepSummaryRow> summary = new ArrayList<>();
+        for (int index = 0; index < ranked.size(); index++) {
+            summary.add(toSummaryRow(index + 1, ranked.get(index)));
+        }
+        return summary;
+    }
+
+    private ParameterSweepSummaryRow toSummaryRow(int rank, CombinationResult result) {
+        ParameterCombination combo = result.combo;
+        return new ParameterSweepSummaryRow(rank, combo.minWickRatio, combo.targetRR, combo.partialExitRR,
+                combo.minC1AtrRatio, combo.minC1VolumeMultiplier, combo.slMarginPercent, combo.timeBasedSlTrailCandles, result.totalTrades,
+                result.wins, result.losses, result.winRate, result.profitFactor, result.avgR,
+                result.categoryPerformance);
     }
 
     /**
@@ -183,6 +217,62 @@ public class FiboParameterSweepEngine {
     }
 
     /**
+     * Builds prior-day OHLC once per symbol/day. Most values reuse the intraday
+     * cache; only the first requested trading day may require one extra fetch.
+     */
+    private Map<String, Map<LocalDate, PreviousDayOhlc>> buildPreviousDayCache(
+            Map<String, String> symbolKeyMap, Map<String, Map<LocalDate, List<Candle>>> candleCache,
+            LocalDate fromDate, LocalDate toDate) {
+        Map<String, Map<LocalDate, PreviousDayOhlc>> cache = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : symbolKeyMap.entrySet()) {
+            Map<LocalDate, List<Candle>> days = candleCache.getOrDefault(entry.getKey(), Map.of());
+            Map<LocalDate, PreviousDayOhlc> levels = new LinkedHashMap<>();
+            for (LocalDate day : days.keySet()) {
+                levels.put(day, findPreviousDayOhlc(entry.getValue(), day, days));
+            }
+            cache.put(entry.getKey(), levels);
+        }
+        return cache;
+    }
+
+    private PreviousDayOhlc findPreviousDayOhlc(String instrumentKey, LocalDate day,
+                                                  Map<LocalDate, List<Candle>> cachedDays) {
+        List<Candle> previousCandles = cachedDays.entrySet().stream()
+                .filter(entry -> entry.getKey().isBefore(day))
+                .max(Map.Entry.comparingByKey())
+                .map(Map.Entry::getValue)
+                .orElse(null);
+        if (previousCandles != null && !previousCandles.isEmpty()) {
+            return toPreviousDayOhlc(previousCandles);
+        }
+
+        LocalDate candidate = day.minusDays(1);
+        for (int attempts = 0; attempts < 10; attempts++, candidate = candidate.minusDays(1)) {
+            if (candidate.getDayOfWeek() == DayOfWeek.SATURDAY || candidate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                continue;
+            }
+            try {
+                List<Candle> candles = candleService.fetchDayCandles(instrumentKey, candidate);
+                if (candles != null && !candles.isEmpty()) {
+                    return toPreviousDayOhlc(candles);
+                }
+            } catch (Exception e) {
+                log.debug("Previous-day OHLC fetch failed for {} on {}: {}", instrumentKey, candidate, e.getMessage());
+            }
+        }
+        return PreviousDayOhlc.empty();
+    }
+
+    private PreviousDayOhlc toPreviousDayOhlc(List<Candle> candles) {
+        Candle first = candles.stream().min(Comparator.comparing(Candle::getTimestamp)).orElseThrow();
+        Candle last = candles.stream().max(Comparator.comparing(Candle::getTimestamp)).orElseThrow();
+        return new PreviousDayOhlc(first.getOpen(),
+                candles.stream().mapToDouble(Candle::getHigh).max().orElse(first.getHigh()),
+                candles.stream().mapToDouble(Candle::getLow).min().orElse(first.getLow()),
+                last.getClose());
+    }
+
+    /**
      * Build all parameter combinations to test.
      */
     private List<ParameterCombination> buildParameterCombinations() {
@@ -194,9 +284,11 @@ public class FiboParameterSweepEngine {
                     for (double minC1AtrRatio : MIN_C1_ATR_RATIOS) {
                         for (double minC1VolumeMultiplier : MIN_C1_VOLUME_MULTIPLIERS) {
                             for (double slMarginPercent : SL_MARGIN_PERCENTS) {
-                                combos.add(new ParameterCombination(
-                                        minWickRatio, targetRR, partialExitRR,
-                                        minC1AtrRatio, minC1VolumeMultiplier, slMarginPercent));
+                                for (int trailCandles : TIME_BASED_SL_TRAIL_CANDLES) {
+                                    combos.add(new ParameterCombination(
+                                            minWickRatio, targetRR, partialExitRR,
+                                            minC1AtrRatio, minC1VolumeMultiplier, slMarginPercent, trailCandles));
+                                }
                             }
                         }
                     }
@@ -221,6 +313,7 @@ public class FiboParameterSweepEngine {
     private List<BacktestTrade> evaluateSymbolForCombo(
             String symbol,
             Map<LocalDate, List<Candle>> cachedDaysForSymbol,
+            Map<LocalDate, PreviousDayOhlc> previousDaysForSymbol,
             ParameterCombination combo) {
 
         List<BacktestTrade> trades = new ArrayList<>();
@@ -235,6 +328,7 @@ public class FiboParameterSweepEngine {
         double originalMinC1AtrRatio = config.getMinC1AtrRatio();
         double originalMinC1VolumeMultiplier = config.getMinC1VolumeMultiplier();
         double originalSlMarginPercent = config.getSlMarginPercent();
+        int originalTimeBasedSlTrailCandles = config.getTimeBasedSlTrailCandles();
 
         config.setMinWickRatio(combo.minWickRatio);
         config.setTargetRR(combo.targetRR);
@@ -242,6 +336,7 @@ public class FiboParameterSweepEngine {
         config.setMinC1AtrRatio(combo.minC1AtrRatio);
         config.setMinC1VolumeMultiplier(combo.minC1VolumeMultiplier);
         config.setSlMarginPercent(combo.slMarginPercent);
+        config.setTimeBasedSlTrailCandles(combo.timeBasedSlTrailCandles);
 
         try {
             for (Map.Entry<LocalDate, List<Candle>> dayEntry : cachedDaysForSymbol.entrySet()) {
@@ -250,8 +345,13 @@ public class FiboParameterSweepEngine {
                 List<Candle> candles = dayEntry.getValue();
 
                 try {
-                    Optional<BacktestTrade> trade = strategy.evaluate(symbol, day, candles);
-                    trade.ifPresent(trades::add);
+                    PreviousDayOhlc previousDay = previousDaysForSymbol == null
+                            ? PreviousDayOhlc.empty()
+                            : previousDaysForSymbol.getOrDefault(day, PreviousDayOhlc.empty());
+                    trades.addAll(strategy.evaluate(symbol, day, candles,
+                            -1.0, 0.0, 0, config.getFixedRiskRupees(),
+                            previousDay.open(), previousDay.high(), previousDay.low(), previousDay.close(),
+                            0.0, 0.0, 0.0, 0.0));
                 } catch (Exception e) {
                     log.error("Error evaluating {} on {}: {}", symbol, day, e.getMessage());
                 }
@@ -263,6 +363,7 @@ public class FiboParameterSweepEngine {
             config.setMinC1AtrRatio(originalMinC1AtrRatio);
             config.setMinC1VolumeMultiplier(originalMinC1VolumeMultiplier);
             config.setSlMarginPercent(originalSlMarginPercent);
+            config.setTimeBasedSlTrailCandles(originalTimeBasedSlTrailCandles);
         }
 
         return trades;
@@ -276,10 +377,10 @@ public class FiboParameterSweepEngine {
             CombinationResult r = results.get(i);
             ParameterCombination c = r.combo;
 
-            log.info("#{} wick={} target={} partial={} atr={} vol={} sl={}% | trades={} wins={} winRate={}% PF={} avgR={}",
+            log.info("#{} wick={} target={} partial={} atr={} vol={} sl={}% trailCandles={} | trades={} wins={} winRate={}% PF={} avgR={}",
                     i + 1,
                     c.minWickRatio, c.targetRR, c.partialExitRR,
-                    c.minC1AtrRatio, c.minC1VolumeMultiplier, c.slMarginPercent,
+                    c.minC1AtrRatio, c.minC1VolumeMultiplier, c.slMarginPercent, c.timeBasedSlTrailCandles,
                     r.totalTrades, r.wins, r.winRate, r.profitFactor, r.avgR);
         }
     }
@@ -292,15 +393,24 @@ public class FiboParameterSweepEngine {
         final double minC1AtrRatio;
         final double minC1VolumeMultiplier;
         final double slMarginPercent;
+        final int timeBasedSlTrailCandles;
 
         public ParameterCombination(double minWickRatio, double targetRR, double partialExitRR,
-                                    double minC1AtrRatio, double minC1VolumeMultiplier, double slMarginPercent) {
+                                    double minC1AtrRatio, double minC1VolumeMultiplier, double slMarginPercent,
+                                    int timeBasedSlTrailCandles) {
             this.minWickRatio = minWickRatio;
             this.targetRR = targetRR;
             this.partialExitRR = partialExitRR;
             this.minC1AtrRatio = minC1AtrRatio;
             this.minC1VolumeMultiplier = minC1VolumeMultiplier;
             this.slMarginPercent = slMarginPercent;
+            this.timeBasedSlTrailCandles = timeBasedSlTrailCandles;
+        }
+    }
+
+    private record PreviousDayOhlc(Double open, Double high, Double low, Double close) {
+        private static PreviousDayOhlc empty() {
+            return new PreviousDayOhlc(null, null, null, null);
         }
     }
 
@@ -314,6 +424,7 @@ public class FiboParameterSweepEngine {
         final double winRate;
         final double profitFactor;
         final double avgR;
+        final Map<FiboPreviousDayCategory, FiboCategoryPerformance> categoryPerformance;
 
         public ParameterCombination getCombo() { return combo; }
         public List<BacktestTrade> getTrades() { return trades; }
@@ -323,6 +434,7 @@ public class FiboParameterSweepEngine {
         public double getWinRate() { return winRate; }
         public double getProfitFactor() { return profitFactor; }
         public double getAvgR() { return avgR; }
+        public Map<FiboPreviousDayCategory, FiboCategoryPerformance> getCategoryPerformance() { return categoryPerformance; }
 
         public CombinationResult(ParameterCombination combo, List<BacktestTrade> trades) {
             this.combo = combo;
@@ -352,6 +464,7 @@ public class FiboParameterSweepEngine {
             this.winRate = totalTrades > 0 ? (double) w / totalTrades * 100.0 : 0;
             this.profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Double.MAX_VALUE : 0);
             this.avgR = totalTrades > 0 ? totalR / totalTrades : 0;
+            this.categoryPerformance = FiboCategoryPerformance.summarize(trades);
         }
     }
 
@@ -381,11 +494,13 @@ public class FiboParameterSweepEngine {
         private final double minC1AtrRatio;
         private final double minC1VolumeMultiplier;
         private final double slMarginPercent;
+        private final int timeBasedSlTrailCandles;
         private final int totalTrades;
         private final int wins;
         private final int losses;
         private final double winRate;
         private final double profitFactor;
         private final double avgR;
+        private final Map<FiboPreviousDayCategory, FiboCategoryPerformance> categoryPerformance;
     }
 }

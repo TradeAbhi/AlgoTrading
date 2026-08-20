@@ -157,7 +157,8 @@ public class BacktestRunnerService {
                         .collect(java.util.stream.Collectors.toSet());
 
                 // Problem 3 — fetch A/D ratio once per day (shared across all symbol threads)
-                double adRatio = fetchAdRatio();
+                // double adRatio = fetchAdRatio();
+                double adRatio = -1.0;
                 filterAvailability.record("advanceDeclineRatio", adRatio < 0 || adRatio == 0);
                 
                 // Categorize trade based on A/D ratio
@@ -272,7 +273,8 @@ public class BacktestRunnerService {
                         .map(BacktestTrade::getSymbol)
                         .collect(java.util.stream.Collectors.toSet());
 
-                double adRatio = fetchAdRatio();
+                // double adRatio = fetchAdRatio();
+                double adRatio = -1.0;
                 filterAvailability.record("advanceDeclineRatio", adRatio < 0 || adRatio == 0);
                 log.info("Date {} — A/D ratio={}", date, adRatio);
 
@@ -359,7 +361,8 @@ public class BacktestRunnerService {
 
             double dailyAtr  = 0.0;
             double atr5m     = compute5mAtr(instrumentKey, date);
-            long avgC1Volume = computeAvgC1Volume(instrumentKey, date);
+            // long avgC1Volume = computeAvgC1Volume(instrumentKey, date);
+            long avgC1Volume = 0;
 
             Map<String, Double> prevDayOhlc = fetchPrevDayOhlc(instrumentKey, date);
             Double prevDayHigh  = prevDayOhlc != null ? prevDayOhlc.get("high")  : null;
@@ -374,12 +377,11 @@ public class BacktestRunnerService {
                     prevDayHigh == null || prevDayLow == null || prevDayClose == null
                     || prevDayHigh == 0 || prevDayLow == 0 || prevDayClose == 0);
 
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr,
+            List<BacktestTrade> evaluatedTrades = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr,
                     avgC1Volume, riskRupees, prevDayOpen, prevDayHigh, prevDayLow, prevDayClose,
                     niftyVwap, niftyPrice, vix, atr5m, com.trading.algo.fibostrategy.OpeningCandleStrategyService.C2_TIME, rejectionTracker);
 
-            if (trade.isPresent()) {
-                BacktestTrade t = trade.get();
+            evaluatedTrades.forEach(t -> {
                 dayTrades.add(t);
                 totalSignals.incrementAndGet();
                 if (t.getOutcome() == com.trading.algo.entity.BacktestTrade.Outcome.SL_HIT) {
@@ -388,7 +390,7 @@ public class BacktestRunnerService {
                 log.info("  ✅ {} {} {} → {}  pnl₹={}",
                         symbol, date, t.getDirection(), t.getOutcome(),
                         String.format("%.0f", t.getPnlRupees()));
-            }
+            });
 
             totalProcessed.incrementAndGet();
 
@@ -442,7 +444,8 @@ public class BacktestRunnerService {
             // double dailyAtr  = computeAtr(instrumentKey, date);
             double dailyAtr = 0.0;
             double atr5m = compute5mAtr(instrumentKey, date);
-            long avgC1Volume = computeAvgC1Volume(instrumentKey, date);
+            // long avgC1Volume = computeAvgC1Volume(instrumentKey, date);
+            long avgC1Volume = 0;
 
             Map<String, Double> prevDayOhlc = fetchPrevDayOhlc(instrumentKey, date);
             Double prevDayHigh  = prevDayOhlc != null ? prevDayOhlc.get("high")  : null;
@@ -457,10 +460,9 @@ public class BacktestRunnerService {
                     prevDayHigh == null || prevDayLow == null || prevDayClose == null
                             || prevDayHigh == 0 || prevDayLow == 0 || prevDayClose == 0);
 
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees, prevDayOpen, prevDayHigh, prevDayLow, prevDayClose, niftyVwap, niftyPrice, vix, atr5m, com.trading.algo.fibostrategy.OpeningCandleStrategyService.C2_TIME, rejectionTracker);
+            List<BacktestTrade> evaluatedTrades = strategy.evaluate(symbol, date, candles, adRatio, dailyAtr, avgC1Volume, riskRupees, prevDayOpen, prevDayHigh, prevDayLow, prevDayClose, niftyVwap, niftyPrice, vix, atr5m, com.trading.algo.fibostrategy.OpeningCandleStrategyService.C2_TIME, rejectionTracker);
 
-            if (trade.isPresent()) {
-                BacktestTrade t = trade.get();
+            evaluatedTrades.forEach(t -> {
                 
                 // Apply A/D ratio filter to trade direction
                 if (!momentumStockSnapshotService.isTradeDirectionAllowed(adRatio, t.getDirection().name())) {
@@ -478,7 +480,7 @@ public class BacktestRunnerService {
                 log.info("  ✅ {} {} {} → {}  pnl₹={}",
                         symbol, date, t.getDirection(), t.getOutcome(),
                         String.format("%.0f", t.getPnlRupees()));
-            }
+            });
 
             totalProcessed.incrementAndGet();
 

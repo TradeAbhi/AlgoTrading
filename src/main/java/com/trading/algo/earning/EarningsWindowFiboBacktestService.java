@@ -70,12 +70,12 @@ public class EarningsWindowFiboBacktestService {
 
     private Optional<TriggeredTrade> evaluate(String symbol, String instrumentKey, LocalDate date) {
         List<Candle> candles = candleService.fetchDayCandles(instrumentKey, date);
-        Optional<BacktestTrade> setup = strategy.evaluate(symbol, date, candles);
-        if (setup.isEmpty()) {
+        List<BacktestTrade> setups = strategy.evaluate(symbol, date, candles);
+        if (setups.isEmpty()) {
             return Optional.empty();
         }
 
-        BacktestTrade signal = setup.get();
+        BacktestTrade signal = setups.get(0);
         double breakoutLevel = signal.getDirection() == BacktestTrade.Direction.BUY
                 ? Math.max(signal.getC1High(), signal.getC2High())
                 : Math.min(signal.getC1Low(), signal.getC2Low());

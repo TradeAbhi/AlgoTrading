@@ -18,42 +18,67 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * IPO Breakout Backtest Service
+ * IPO / Weekly-High Breakout Backtest Service
  *
- * Strategy rules:
- *  - First candle = listing day or first available candle after listing date
- *  - Entry when any subsequent candle closes above first candle high
- *  - Stop loss = low of breakout candle
- *  - Risk-reward = 1:3
- *  - Trail SL to entry price at 1:3 (book 50% quantity)
- *  - Exit remaining 50% at 1:6
+ * WEEKLY breakout rules (REPLACES the old "close > first candle high" check):
+ *  1. Take the last 3 weekly candles INCLUDING the candidate breakout
+ *     candle. Rise% = (highest high - lowest low) / lowest low * 100 across
+ *     those 3 candles. Must be < RISE_THRESHOLD_PERCENT (25%).
+ *  2. The candidate candle's CLOSE must be strictly greater than the
+ *     highest high of the 10 weekly candles immediately BEFORE it.
+ *  3. Post-breakout, monitor the next REJECTION_MONITOR_CANDLES (4) DAILY
+ *     candles (ASSUMPTION #1 above) for two independent exit triggers:
+ *
+ *     a) SINGLE REJECTION: a candle with top-wick-ratio > 60% AND
+ *        volume >= 75% of the breakout candle's volume -> exit
+ *        immediately at that candle's close.
+ *
+ *     b) DUAL REJECTION: if, within the 4-candle window, there is at
+ *        least one "upside rejection" candle (top-wick-ratio > 60%) AND
+ *        at least one "downside rejection" candle (bottom-wick-ratio >
+ *        60%) that did NOT already trigger rule (a) individually, sum
+ *        the highest-volume candle from each side. If that sum is
+ *        STRICTLY GREATER (ASSUMPTION #2) than breakout volume -> exit
+ *        at the later of the two candles' close.
+ *
+ *     If neither triggers within the 4-candle window, fall back to the
+ *     original SL/target (1:3 RR) simulation for the remaining holding
+ *     period (ASSUMPTION #7).
+ *
+ * DAILY breakout path (unchanged - "close > first candle high", used for
+ * the non-weekly / non-IPO-specific case) is left exactly as it was.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class IpoBacktestService {
 
-    private static final int MAX_SCAN_DAYS = 30;       // Maximum days to scan from closeDate
-    private static final double RISK_REWARD_1 = 3.0;   // First target at 1:3
-    private static final double RISK_REWARD_2 = 6.0;   // Second target at 1:6
+    // Bumped from 30 - the new weekly rule needs ~10 weeks of PRIOR history
+    // before a breakout can even be evaluated, plus scan time after.
+    // (ASSUMPTION #5 - tune as needed.)
+    private static final int MAX_SCAN_DAYS = 150;
+
+    private static final double RISK_REWARD = 3.0; // Target at 1:3 (daily path + weekly fallback)
+
+    // ---- New weekly breakout rule constants ----
+    private static final double RISE_THRESHOLD_PERCENT = 25.0;
+    private static final int WEEKLY_LOOKBACK_FOR_HIGH = 10;
+    private static final int REJECTION_MONITOR_CANDLES = 4;
+    private static final double REJECTION_TOP_WICK_RATIO_THRESHOLD = 60.0;
+    private static final double REJECTION_BOTTOM_WICK_RATIO_THRESHOLD = 60.0;
+    private static final double REJECTION_VOLUME_PCT_OF_BREAKOUT = 0.75;
 
     private final IpoRepository ipoRepository;
     private final IpoBacktestTradeRepository backtestRepository;
     private final UpstoxInstrumentMasterService instrumentMasterService;
     private final UpstoxHistoricalCandleService candleService;
 
-    /**
-     * Runs backtest for all IPOs in the database
-     */
     @Transactional
     public BacktestSummary runBacktestForAllIpos() {
         List<Ipo> ipos = ipoRepository.findAll();
         return runBacktestForIpos(ipos);
     }
 
-    /**
-     * Runs backtest for specific IPOs only
-     */
     @Transactional
     public BacktestSummary runBacktestForIpos(List<Ipo> ipos) {
         List<IpoBacktestTrade> trades = new ArrayList<>();
@@ -90,17 +115,12 @@ public class IpoBacktestService {
             }
         }
 
-        // Save all trades
         backtestRepository.saveAll(trades);
 
         log.info("Backtest complete - Processed: {}, Skipped: {}, Trades: {}", processed, skipped, trades.size());
         return buildSummary(trades, processed, skipped);
     }
 
-    /**
-     * Runs backtest for a specific IPO
-     * Optimized to start from closeDate (issue end date) and fetch day-by-day
-     */
     @Transactional
     public Optional<IpoBacktestTrade> runBacktestForIpo(Ipo ipo) {
         if (ipo.getSymbol() == null || ipo.getSymbol().isBlank()) {
@@ -115,14 +135,12 @@ public class IpoBacktestService {
             return Optional.empty();
         }
 
-        // Use listingDate as starting point, fallback to closeDate
         LocalDate startDate = ipo.getListingDate() != null ? ipo.getListingDate() : ipo.getCloseDate();
         if (startDate == null) {
             log.warn("No closeDate or listingDate for {}", ipo.getSymbol());
             return Optional.empty();
         }
 
-        // If startDate is in the future, use today as starting point
         if (startDate.isAfter(LocalDate.now())) {
             log.warn("CloseDate {} is in the future for {}, using today as start", startDate, ipo.getSymbol());
             startDate = LocalDate.now();
@@ -130,11 +148,9 @@ public class IpoBacktestService {
 
         log.info("Starting candle fetch for {} from {}", ipo.getSymbol(), startDate);
 
-        // Fetch candles incrementally and check for breakout
         IncrementalBacktestResult result = fetchAndCheckBreakout(instrumentKey, ipo, startDate);
 
         if (result.firstCandle == null) {
-            // No candles found at all
             IpoBacktestTrade noCandleTrade = IpoBacktestTrade.builder()
                     .symbol(ipo.getSymbol())
                     .companyName(ipo.getName())
@@ -149,13 +165,11 @@ public class IpoBacktestService {
             return Optional.of(noCandleTrade);
         }
 
-        // Process daily breakout if found
         IpoBacktestTrade trade;
         if (result.breakout.isPresent()) {
             BreakoutResult br = result.breakout.get();
-            trade = processTrade(ipo, result.firstCandle, br, result.allCandles, false);
+            trade = processDailyTrade(ipo, result.firstCandle, br, result.allCandles);
         } else {
-            // No daily breakout
             trade = IpoBacktestTrade.builder()
                     .symbol(ipo.getSymbol())
                     .companyName(ipo.getName())
@@ -172,12 +186,10 @@ public class IpoBacktestService {
                     .build();
         }
 
-        // Process weekly breakout if found
         if (result.weeklyBreakout.isPresent()) {
-            BreakoutResult weeklyBr = result.weeklyBreakout.get();
-            IpoBacktestTrade weeklyTrade = processTrade(ipo, result.firstCandle, weeklyBr, result.allCandles, true);
+            WeeklyBreakoutResult weeklyBr = result.weeklyBreakout.get();
+            IpoBacktestTrade weeklyTrade = processWeeklyTrade(ipo, result.firstCandle, weeklyBr, result.allCandles);
 
-            // Merge weekly results into main trade
             trade.setWeeklyBreakoutDate(weeklyTrade.getBreakoutDate());
             trade.setWeeklyBreakoutOpen(weeklyTrade.getBreakoutOpen());
             trade.setWeeklyBreakoutHigh(weeklyTrade.getBreakoutHigh());
@@ -186,10 +198,10 @@ public class IpoBacktestService {
             trade.setWeeklyEntryPrice(weeklyTrade.getEntryPrice());
             trade.setWeeklyStopLoss(weeklyTrade.getStopLoss());
             trade.setWeeklyTarget1(weeklyTrade.getTarget1());
-            trade.setWeeklyTarget2(weeklyTrade.getTarget2());
+            trade.setWeeklyTarget2(0.0);
             trade.setWeeklyRiskPoints(weeklyTrade.getRiskPoints());
             trade.setWeeklyReward1Points(weeklyTrade.getReward1Points());
-            trade.setWeeklyReward2Points(weeklyTrade.getReward2Points());
+            trade.setWeeklyReward2Points(0.0);
             trade.setWeeklyOutcome(weeklyTrade.getOutcome());
             trade.setWeeklyExitPrice(weeklyTrade.getExitPrice());
             trade.setWeeklyPnlPoints(weeklyTrade.getPnlPoints());
@@ -199,6 +211,9 @@ public class IpoBacktestService {
             trade.setWeeklyExitReason(weeklyTrade.getExitReason());
             trade.setWeeklySlTrailedToBreakeven(weeklyTrade.isSlTrailedToBreakeven());
             trade.setWeeklyTrailTime(weeklyTrade.getTrailTime());
+            // ---- new fields - add to IpoBacktestTrade/@Builder ----
+            trade.setWeeklyRiseFromBottomPercent(weeklyTrade.getWeeklyRiseFromBottomPercent());
+            trade.setWeeklyHighestHighLast10(weeklyTrade.getWeeklyHighestHighLast10());
         } else {
             trade.setWeeklyOutcome(IpoBacktestTrade.Outcome.NO_BREAKOUT);
             trade.setWeeklyExitReason("No weekly breakout within " + MAX_SCAN_DAYS + " days");
@@ -208,8 +223,9 @@ public class IpoBacktestService {
     }
 
     /**
-     * Fetches candles incrementally from closeDate and checks for breakout
-     * Stops fetching once breakout triggers or max days reached
+     * Fetches candles incrementally from startDate. Daily breakout check is
+     * UNCHANGED (close > first candle high). Weekly breakout check now uses
+     * the new 25%-rise + 10-week-highest-close rule.
      */
     private IncrementalBacktestResult fetchAndCheckBreakout(String instrumentKey, Ipo ipo, LocalDate startDate) {
         List<Candle> allCandles = new ArrayList<>();
@@ -229,14 +245,12 @@ public class IpoBacktestService {
                 if (dayCandles != null && !dayCandles.isEmpty()) {
                     allCandles.addAll(dayCandles);
 
-                    // Set first candle if not yet set
                     if (firstCandle == null) {
                         firstCandle = dayCandles.get(0);
                         breakoutLevel = firstCandle.getHigh();
                         log.info("First candle found for {} on {}: High={}", ipo.getSymbol(), current, breakoutLevel);
                     }
 
-                    // Check for breakout in newly added candles
                     if (firstCandle != null) {
                         for (Candle c : dayCandles) {
                             if (c != firstCandle && c.getClose() > breakoutLevel) {
@@ -247,7 +261,7 @@ public class IpoBacktestService {
                                         allCandles,
                                         firstCandle,
                                         Optional.of(new BreakoutResult(c, breakoutIndex)),
-                                        Optional.empty()  // weekly breakout not found yet
+                                        Optional.empty()
                                 );
                             }
                         }
@@ -262,49 +276,94 @@ public class IpoBacktestService {
         }
 
         log.info("No daily breakout found for {} after scanning {} days", ipo.getSymbol(), daysChecked);
-        // Check for weekly breakout even if no daily breakout
-        Optional<BreakoutResult> weeklyBreakout = checkWeeklyBreakout(allCandles, firstCandle, ipo);
+        Optional<WeeklyBreakoutResult> weeklyBreakout = checkWeeklyBreakout(allCandles, ipo);
         return new IncrementalBacktestResult(allCandles, firstCandle, Optional.empty(), weeklyBreakout);
     }
 
     /**
-     * Aggregates daily candles to weekly candles and checks for weekly breakout
+     * NEW weekly breakout rule. Replaces the old fixed-level check.
+     *
+     * For each weekly candidate i (needs >= WEEKLY_LOOKBACK_FOR_HIGH prior
+     * weekly candles, so i must be >= 10):
+     *   1. 3-candle rise% (candidates i-2, i-1, i) must be < 25%.
+     *   2. candidate.close must be > highest high of weekly candles [i-10, i-1].
      */
-    private Optional<BreakoutResult> checkWeeklyBreakout(List<Candle> dailyCandles, Candle firstCandle, Ipo ipo) {
-        if (dailyCandles.isEmpty() || firstCandle == null) {
+    private Optional<WeeklyBreakoutResult> checkWeeklyBreakout(List<Candle> dailyCandles, Ipo ipo) {
+        if (dailyCandles.isEmpty()) {
             return Optional.empty();
         }
 
-        List<Candle> weeklyCandles = aggregateToWeekly(dailyCandles);
-        if (weeklyCandles.size() < 2) {
-            return Optional.empty();
-        }
+        List<WeeklyAggregate> weeklyAggregates = aggregateToWeekly(dailyCandles);
 
-        double breakoutLevel = firstCandle.getHigh();
+        int minRequiredIndex = WEEKLY_LOOKBACK_FOR_HIGH; // need 10 prior + current, so i starts at 10 (0-indexed)
 
-        // Check for weekly breakout (skip first weekly candle which contains first daily candle)
-        for (int i = 1; i < weeklyCandles.size(); i++) {
-            Candle weeklyCandle = weeklyCandles.get(i);
-            if (weeklyCandle.getClose() > breakoutLevel) {
-                log.info("Weekly breakout found for {} on week {}: Close={} > Level={}",
-                        ipo.getSymbol(), i, weeklyCandle.getClose(), breakoutLevel);
-                // Map back to daily candles index
-                int breakoutIndex = dailyCandles.indexOf(weeklyCandle);
-                return Optional.of(new BreakoutResult(weeklyCandle, breakoutIndex));
+        for (int i = minRequiredIndex; i < weeklyAggregates.size(); i++) {
+
+            Candle candidate = weeklyAggregates.get(i).weeklyCandle();
+
+            // ── Rule 1: 3-candle rise% (candidates i-2, i-1, i) < 25% ────
+            Candle wMinus2 = weeklyAggregates.get(i - 2).weeklyCandle();
+            Candle wMinus1 = weeklyAggregates.get(i - 1).weeklyCandle();
+
+            double windowHigh = Math.max(candidate.getHigh(), Math.max(wMinus1.getHigh(), wMinus2.getHigh()));
+            double windowLow = Math.min(candidate.getLow(), Math.min(wMinus1.getLow(), wMinus2.getLow()));
+
+            if (windowLow <= 0) {
+                continue; // guard against bad data
             }
+
+            double risePercent = (windowHigh - windowLow) / windowLow * 100.0;
+
+            if (risePercent >= RISE_THRESHOLD_PERCENT) {
+                continue;
+            }
+
+            // ── Rule 2: candidate close > highest high of last 10 weekly candles BEFORE it ──
+            double highestHighLast10 = 0;
+            for (int j = i - WEEKLY_LOOKBACK_FOR_HIGH; j < i; j++) {
+                highestHighLast10 = Math.max(highestHighLast10, weeklyAggregates.get(j).weeklyCandle().getHigh());
+            }
+
+            if (candidate.getClose() <= highestHighLast10) {
+                continue;
+            }
+
+            log.info("Weekly breakout (new rule) found for {} at week starting {}: rise%={} close={} > 10wHigh={}",
+                    ipo.getSymbol(), candidate.getTimestamp().toLocalDate(),
+                    String.format("%.2f", risePercent),
+                    String.format("%.2f", candidate.getClose()),
+                    String.format("%.2f", highestHighLast10));
+
+            // Map to the LAST DAILY candle belonging to this breakout week -
+            // fixes the original dailyCandles.indexOf(weeklyCandle) bug,
+            // since weeklyCandle is a synthesized object never present in
+            // dailyCandles by reference/equals.
+            List<Candle> memberDailyCandles = weeklyAggregates.get(i).memberDailyCandles();
+            Candle lastDailyInBreakoutWeek = memberDailyCandles.get(memberDailyCandles.size() - 1);
+            int dailyBreakoutIndex = dailyCandles.indexOf(lastDailyInBreakoutWeek);
+
+            if (dailyBreakoutIndex < 0) {
+                log.warn("Could not map weekly breakout back to daily index for {} - skipping", ipo.getSymbol());
+                continue;
+            }
+
+            return Optional.of(new WeeklyBreakoutResult(
+                    candidate, dailyBreakoutIndex, risePercent, highestHighLast10));
         }
 
         return Optional.empty();
     }
 
     /**
-     * Aggregates daily candles to weekly candles
+     * Aggregates daily candles to weekly candles, retaining each weekly
+     * candle's member daily candles (needed to correctly map a weekly
+     * breakout back to a daily index - see checkWeeklyBreakout above).
      */
-    private List<Candle> aggregateToWeekly(List<Candle> dailyCandles) {
-        List<Candle> weeklyCandles = new ArrayList<>();
+    private List<WeeklyAggregate> aggregateToWeekly(List<Candle> dailyCandles) {
+        List<WeeklyAggregate> weeklyAggregates = new ArrayList<>();
 
         if (dailyCandles.isEmpty()) {
-            return weeklyCandles;
+            return weeklyAggregates;
         }
 
         List<Candle> currentWeek = new ArrayList<>();
@@ -313,10 +372,10 @@ public class IpoBacktestService {
         for (Candle daily : dailyCandles) {
             LocalDate candleDate = daily.getTimestamp().toLocalDate();
 
-            // Start new week
             if (currentWeekStart == null || candleDate.isAfter(currentWeekStart.plusDays(6))) {
                 if (!currentWeek.isEmpty()) {
-                    weeklyCandles.add(createWeeklyCandle(currentWeek));
+                    weeklyAggregates.add(new WeeklyAggregate(
+                            createWeeklyCandle(currentWeek), new ArrayList<>(currentWeek)));
                 }
                 currentWeek = new ArrayList<>();
                 currentWeekStart = candleDate;
@@ -325,17 +384,14 @@ public class IpoBacktestService {
             currentWeek.add(daily);
         }
 
-        // Add last week
         if (!currentWeek.isEmpty()) {
-            weeklyCandles.add(createWeeklyCandle(currentWeek));
+            weeklyAggregates.add(new WeeklyAggregate(
+                    createWeeklyCandle(currentWeek), new ArrayList<>(currentWeek)));
         }
 
-        return weeklyCandles;
+        return weeklyAggregates;
     }
 
-    /**
-     * Creates a weekly candle from a list of daily candles
-     */
     private Candle createWeeklyCandle(List<Candle> dailyCandles) {
         double open = dailyCandles.get(0).getOpen();
         double high = dailyCandles.stream().mapToDouble(Candle::getHigh).max().orElse(0);
@@ -347,27 +403,19 @@ public class IpoBacktestService {
         return new Candle(timestamp, open, high, low, close, volume);
     }
 
-    /**
-     * Processes the trade after breakout
-     * @param isWeekly if true, processes weekly trade, otherwise daily trade
-     */
-    private IpoBacktestTrade processTrade(Ipo ipo, Candle firstCandle, BreakoutResult breakout, List<Candle> allCandles, boolean isWeekly) {
+    /** Daily breakout path - UNCHANGED, uses the original 1:3 RR simulateTrade. */
+    private IpoBacktestTrade processDailyTrade(Ipo ipo, Candle firstCandle, BreakoutResult breakout, List<Candle> allCandles) {
         Candle breakoutCandle = breakout.breakoutCandle;
         int breakoutIndex = breakout.breakoutIndex;
 
         double entryPrice = breakoutCandle.getClose();
         double stopLoss = breakoutCandle.getLow();
         double riskPoints = entryPrice - stopLoss;
-        double target1 = entryPrice + (riskPoints * RISK_REWARD_1);
-        double target2 = entryPrice + (riskPoints * RISK_REWARD_2);
+        double target = entryPrice + (riskPoints * RISK_REWARD);
 
-        // Simulate trade execution
-        TradeResult result = simulateTrade(allCandles, breakoutIndex, entryPrice, stopLoss, target1, target2);
+        TradeResult result = simulateTrade(allCandles, breakoutIndex, entryPrice, stopLoss, target);
 
-        // Assume 100 shares for backtest (50% booked at target1, 50% at target2)
         int totalQuantity = 100;
-        int bookedQuantity = result.bookedAtTarget1 ? 50 : 0;
-        int remainingQuantity = totalQuantity - bookedQuantity;
 
         return IpoBacktestTrade.builder()
                 .symbol(ipo.getSymbol())
@@ -386,14 +434,14 @@ public class IpoBacktestService {
                 .breakoutClose(breakoutCandle.getClose())
                 .entryPrice(entryPrice)
                 .stopLoss(stopLoss)
-                .target1(target1)
-                .target2(target2)
+                .target1(target)
+                .target2(0.0)
                 .riskPoints(riskPoints)
-                .reward1Points(target1 - entryPrice)
-                .reward2Points(target2 - entryPrice)
+                .reward1Points(target - entryPrice)
+                .reward2Points(0.0)
                 .totalQuantity(totalQuantity)
-                .bookedQuantity(bookedQuantity)
-                .remainingQuantity(remainingQuantity)
+                .bookedQuantity(0)
+                .remainingQuantity(totalQuantity)
                 .outcome(result.outcome)
                 .exitPrice(result.exitPrice)
                 .pnlPoints(result.pnlPoints)
@@ -408,115 +456,248 @@ public class IpoBacktestService {
     }
 
     /**
-     * Simulates trade execution with trailing SL
+     * Weekly breakout path - NEW. Entry/SL logic unchanged (entry = close,
+     * SL = breakout candle low, 1:3 RR target), but simulation now runs
+     * through the new 4-daily-candle rejection-exit rules first, falling
+     * back to standard SL/target simulation if neither rejection rule
+     * fires within that window.
+     */
+    private IpoBacktestTrade processWeeklyTrade(Ipo ipo, Candle firstCandle, WeeklyBreakoutResult breakout, List<Candle> dailyCandles) {
+        Candle breakoutCandle = breakout.breakoutCandle;
+        int dailyBreakoutIndex = breakout.dailyBreakoutIndex;
+
+        double entryPrice = breakoutCandle.getClose();
+        double stopLoss = breakoutCandle.getLow();
+        double riskPoints = entryPrice - stopLoss;
+        double target = entryPrice + (riskPoints * RISK_REWARD);
+
+        TradeResult result = simulateTradeWithRejectionLogic(
+                dailyCandles, dailyBreakoutIndex, entryPrice, stopLoss, target, breakoutCandle.getVolume());
+
+        int totalQuantity = 100;
+
+        return IpoBacktestTrade.builder()
+                .symbol(ipo.getSymbol())
+                .companyName(ipo.getName())
+                .listingDate(ipo.getListingDate())
+                .tradeDate(toLocalDate(breakoutCandle.getTimestamp()))
+                .firstCandleDate(toLocalDate(firstCandle.getTimestamp()))
+                .firstCandleOpen(firstCandle.getOpen())
+                .firstCandleHigh(firstCandle.getHigh())
+                .firstCandleLow(firstCandle.getLow())
+                .firstCandleClose(firstCandle.getClose())
+                .breakoutDate(toLocalDate(breakoutCandle.getTimestamp()))
+                .breakoutOpen(breakoutCandle.getOpen())
+                .breakoutHigh(breakoutCandle.getHigh())
+                .breakoutLow(breakoutCandle.getLow())
+                .breakoutClose(breakoutCandle.getClose())
+                .entryPrice(entryPrice)
+                .stopLoss(stopLoss)
+                .target1(target)
+                .target2(0.0)
+                .riskPoints(riskPoints)
+                .reward1Points(target - entryPrice)
+                .reward2Points(0.0)
+                .totalQuantity(totalQuantity)
+                .bookedQuantity(0)
+                .remainingQuantity(totalQuantity)
+                .outcome(result.outcome)
+                .exitPrice(result.exitPrice)
+                .pnlPoints(result.pnlPoints)
+                .pnlPercent(result.pnlPercent)
+                .actualRR(result.actualRR)
+                .exitTime(result.exitTime)
+                .exitReason(result.exitReason)
+                .slTrailedToBreakeven(result.slTrailedToBreakeven)
+                .trailTime(result.trailTime)
+                .createdAt(LocalDateTime.now())
+                // ---- new fields - add to IpoBacktestTrade/@Builder ----
+                .weeklyRiseFromBottomPercent(breakout.risePercent)
+                .weeklyHighestHighLast10(breakout.highestHighLast10)
+                .build();
+    }
+
+    /**
+     * Original SL/target simulation - kept unchanged for the daily
+     * breakout path.
      */
     private TradeResult simulateTrade(List<Candle> candles, int breakoutIndex,
-                                       double entryPrice, double initialStopLoss,
-                                       double target1, double target2) {
+                                      double entryPrice, double initialStopLoss,
+                                      double target) {
         double currentStopLoss = initialStopLoss;
-        boolean target1Hit = false;
+        boolean targetHit = false;
         boolean slTrailedToBreakeven = false;
         LocalDateTime trailTime = null;
 
         for (int i = breakoutIndex + 1; i < candles.size(); i++) {
             Candle c = candles.get(i);
 
-            // Check if target1 hit
-            if (!target1Hit && c.getHigh() >= target1) {
-                target1Hit = true;
+            if (!targetHit && c.getHigh() >= target) {
+                targetHit = true;
                 slTrailedToBreakeven = true;
-                currentStopLoss = entryPrice;  // Trail SL to entry
+                currentStopLoss = entryPrice;
                 trailTime = c.getTimestamp();
-            }
 
-            // Check if target2 hit (only if target1 already hit)
-            if (target1Hit && c.getHigh() >= target2) {
-                // Exit remaining 50% at target2
-                double pnlPoints = (target1 - entryPrice) * 0.5 + (target2 - entryPrice) * 0.5;
+                double pnlPoints = target - entryPrice;
                 double pnlPercent = (pnlPoints / entryPrice) * 100;
                 double actualRR = pnlPoints / (entryPrice - initialStopLoss);
 
                 return new TradeResult(
-                        IpoBacktestTrade.Outcome.TARGET2_HIT,
-                        target2,
-                        pnlPoints,
-                        pnlPercent,
-                        actualRR,
-                        c.getTimestamp(),
-                        "Target2 (1:6) hit",
-                        slTrailedToBreakeven,
-                        trailTime
-                );
+                        IpoBacktestTrade.Outcome.TARGET1_HIT,
+                        target, pnlPoints, pnlPercent, actualRR, c.getTimestamp(),
+                        "Target (1:3) hit", slTrailedToBreakeven, trailTime);
             }
 
-            // Check if stop loss hit
             if (c.getLow() <= currentStopLoss) {
                 double exitPrice = currentStopLoss;
-                double pnlPoints;
-
-                if (target1Hit) {
-                    // 50% booked at target1, 50% stopped at trailed SL (breakeven)
-                    pnlPoints = (target1 - entryPrice) * 0.5 + (exitPrice - entryPrice) * 0.5;
-                } else {
-                    // Full position stopped at initial SL
-                    pnlPoints = exitPrice - entryPrice;
-                }
-
+                double pnlPoints = exitPrice - entryPrice;
                 double pnlPercent = (pnlPoints / entryPrice) * 100;
                 double actualRR = pnlPoints / (entryPrice - initialStopLoss);
 
-                IpoBacktestTrade.Outcome outcome = target1Hit ?
+                IpoBacktestTrade.Outcome outcome = slTrailedToBreakeven ?
                         IpoBacktestTrade.Outcome.SL_HIT_TRAILED :
                         IpoBacktestTrade.Outcome.SL_HIT;
 
                 return new TradeResult(
-                        outcome,
-                        exitPrice,
-                        pnlPoints,
-                        pnlPercent,
-                        actualRR,
-                        c.getTimestamp(),
-                        target1Hit ? "SL hit after trailing to breakeven" : "SL hit at initial level",
-                        slTrailedToBreakeven,
-                        trailTime
-                );
+                        outcome, exitPrice, pnlPoints, pnlPercent, actualRR, c.getTimestamp(),
+                        slTrailedToBreakeven ? "SL hit after trailing to entry" : "SL hit at initial level",
+                        slTrailedToBreakeven, trailTime);
             }
         }
 
-        // EOD exit - neither target nor SL hit
         Candle lastCandle = candles.get(candles.size() - 1);
         double exitPrice = lastCandle.getClose();
-        double pnlPoints;
-
-        if (target1Hit) {
-            // 50% booked at target1, 50% exited at EOD
-            pnlPoints = (target1 - entryPrice) * 0.5 + (exitPrice - entryPrice) * 0.5;
-        } else {
-            // Full position exited at EOD
-            pnlPoints = exitPrice - entryPrice;
-        }
-
+        double pnlPoints = exitPrice - entryPrice;
         double pnlPercent = (pnlPoints / entryPrice) * 100;
         double actualRR = pnlPoints / (entryPrice - initialStopLoss);
 
         return new TradeResult(
-                IpoBacktestTrade.Outcome.EOD_EXIT,
-                exitPrice,
-                pnlPoints,
-                pnlPercent,
-                actualRR,
-                lastCandle.getTimestamp(),
-                "EOD exit - neither target nor SL hit",
-                slTrailedToBreakeven,
-                trailTime
-        );
+                IpoBacktestTrade.Outcome.EOD_EXIT, exitPrice, pnlPoints, pnlPercent, actualRR,
+                lastCandle.getTimestamp(), "EOD exit - neither target nor SL hit",
+                slTrailedToBreakeven, trailTime);
+    }
+
+    /**
+     * NEW - weekly breakout simulation. Runs SL/target checks every candle
+     * (same as original), PLUS - only for the first REJECTION_MONITOR_CANDLES
+     * daily candles - the two rejection-based exit rules described above.
+     * Falls back to plain SL/target simulation for any remaining candles
+     * once the 4-candle window is exhausted without a rejection exit.
+     */
+    private TradeResult simulateTradeWithRejectionLogic(
+            List<Candle> candles, int breakoutIndex,
+            double entryPrice, double initialStopLoss, double target, long breakoutVolume) {
+
+        double currentStopLoss = initialStopLoss;
+
+        List<Candle> upsideRejectionCandidates = new ArrayList<>();   // top-wick > 60%
+        List<Candle> downsideRejectionCandidates = new ArrayList<>(); // bottom-wick > 60%
+
+        int monitored = 0;
+        int i = breakoutIndex + 1;
+
+        for (; i < candles.size() && monitored < REJECTION_MONITOR_CANDLES; i++, monitored++) {
+
+            Candle c = candles.get(i);
+
+            // ── Standard target/SL checks apply throughout, including
+            // during the 4-candle rejection window. ──────────────────────
+            if (c.getHigh() >= target) {
+                double pnlPoints = target - entryPrice;
+                double pnlPercent = (pnlPoints / entryPrice) * 100;
+                double actualRR = pnlPoints / (entryPrice - initialStopLoss);
+                return new TradeResult(
+                        IpoBacktestTrade.Outcome.TARGET1_HIT, target, pnlPoints, pnlPercent, actualRR,
+                        c.getTimestamp(), "Target (1:3) hit", true, c.getTimestamp());
+            }
+
+            if (c.getLow() <= currentStopLoss) {
+                double exitPrice = currentStopLoss;
+                double pnlPoints = exitPrice - entryPrice;
+                double pnlPercent = (pnlPoints / entryPrice) * 100;
+                double actualRR = pnlPoints / (entryPrice - initialStopLoss);
+                return new TradeResult(
+                        IpoBacktestTrade.Outcome.SL_HIT, exitPrice, pnlPoints, pnlPercent, actualRR,
+                        c.getTimestamp(), "SL hit at initial level", false, null);
+            }
+
+            double range = c.getHigh() - c.getLow();
+            if (range <= 0) {
+                continue;
+            }
+
+            double topWickRatio = (c.getHigh() - Math.max(c.getOpen(), c.getClose())) / range * 100.0;
+            double bottomWickRatio = (Math.min(c.getOpen(), c.getClose()) - c.getLow()) / range * 100.0;
+
+            boolean isUpsideRejection = topWickRatio > REJECTION_TOP_WICK_RATIO_THRESHOLD;
+            boolean isDownsideRejection = bottomWickRatio > REJECTION_BOTTOM_WICK_RATIO_THRESHOLD;
+
+            // ── Rule (a): single-candle rejection, volume >= 75% of
+            // breakout volume -> exit immediately. ────────────────────────
+            if (isUpsideRejection && c.getVolume() >= breakoutVolume * REJECTION_VOLUME_PCT_OF_BREAKOUT) {
+
+                double exitPrice = c.getClose();
+                double pnlPoints = exitPrice - entryPrice;
+                double pnlPercent = (pnlPoints / entryPrice) * 100;
+                double actualRR = pnlPoints / (entryPrice - initialStopLoss);
+
+                return new TradeResult(
+                        IpoBacktestTrade.Outcome.REJECTION_VOLUME_EXIT, // NEW enum value - add to Outcome
+                        exitPrice, pnlPoints, pnlPercent, actualRR, c.getTimestamp(),
+                        String.format("Rejection exit: topWick=%.1f%% vol=%d (>=75%% of BO vol %d)",
+                                topWickRatio, c.getVolume(), breakoutVolume),
+                        false, null);
+            }
+
+            if (isUpsideRejection) {
+                upsideRejectionCandidates.add(c);
+            }
+            if (isDownsideRejection) {
+                downsideRejectionCandidates.add(c);
+            }
+
+            // ── Rule (b): dual rejection, combined volume > breakout volume
+            // (ASSUMPTION #2: strict >) -> exit at the later candle's close. ──
+            if (!upsideRejectionCandidates.isEmpty() && !downsideRejectionCandidates.isEmpty()) {
+
+                Candle bestUpside = upsideRejectionCandidates.stream()
+                        .max((a, b) -> Long.compare(a.getVolume(), b.getVolume())).orElseThrow();
+                Candle bestDownside = downsideRejectionCandidates.stream()
+                        .max((a, b) -> Long.compare(a.getVolume(), b.getVolume())).orElseThrow();
+
+                long combinedVolume = bestUpside.getVolume() + bestDownside.getVolume();
+
+                if (combinedVolume > breakoutVolume) {
+
+                    Candle laterCandle = bestUpside.getTimestamp().isAfter(bestDownside.getTimestamp())
+                            ? bestUpside : bestDownside;
+
+                    double exitPrice = laterCandle.getClose();
+                    double pnlPoints = exitPrice - entryPrice;
+                    double pnlPercent = (pnlPoints / entryPrice) * 100;
+                    double actualRR = pnlPoints / (entryPrice - initialStopLoss);
+
+                    return new TradeResult(
+                            IpoBacktestTrade.Outcome.COMBINED_REJECTION_EXIT, // NEW enum value - add to Outcome
+                            exitPrice, pnlPoints, pnlPercent, actualRR, laterCandle.getTimestamp(),
+                            String.format("Combined rejection exit: upVol=%d + downVol=%d = %d (> BO vol %d)",
+                                    bestUpside.getVolume(), bestDownside.getVolume(), combinedVolume, breakoutVolume),
+                            false, null);
+                }
+            }
+        }
+
+        // ── Neither rejection rule fired within the window - fall back to
+        // plain SL/target simulation for the rest of the holding period. ──
+        return simulateTrade(candles, i - 1, entryPrice, initialStopLoss, target);
     }
 
     private BacktestSummary buildSummary(List<IpoBacktestTrade> trades, int processed, int skipped) {
-        long wins = trades.stream().filter(t -> t.getOutcome() == IpoBacktestTrade.Outcome.TARGET1_HIT
-                || t.getOutcome() == IpoBacktestTrade.Outcome.TARGET2_HIT).count();
+        long wins = trades.stream().filter(t -> t.getOutcome() == IpoBacktestTrade.Outcome.TARGET1_HIT).count();
         long losses = trades.stream().filter(t -> t.getOutcome() == IpoBacktestTrade.Outcome.SL_HIT
-                || t.getOutcome() == IpoBacktestTrade.Outcome.SL_HIT_TRAILED).count();
+                || t.getOutcome() == IpoBacktestTrade.Outcome.SL_HIT_TRAILED
+                || t.getOutcome() == IpoBacktestTrade.Outcome.REJECTION_VOLUME_EXIT
+                || t.getOutcome() == IpoBacktestTrade.Outcome.COMBINED_REJECTION_EXIT).count();
         long noBreakouts = trades.stream().filter(t -> t.getOutcome() == IpoBacktestTrade.Outcome.NO_BREAKOUT).count();
         long eodExits = trades.stream().filter(t -> t.getOutcome() == IpoBacktestTrade.Outcome.EOD_EXIT).count();
 
@@ -537,11 +718,11 @@ public class IpoBacktestService {
         final List<Candle> allCandles;
         final Candle firstCandle;
         final Optional<BreakoutResult> breakout;
-        final Optional<BreakoutResult> weeklyBreakout;
+        final Optional<WeeklyBreakoutResult> weeklyBreakout;
 
         IncrementalBacktestResult(List<Candle> allCandles, Candle firstCandle,
-                                 Optional<BreakoutResult> breakout,
-                                 Optional<BreakoutResult> weeklyBreakout) {
+                                  Optional<BreakoutResult> breakout,
+                                  Optional<WeeklyBreakoutResult> weeklyBreakout) {
             this.allCandles = allCandles;
             this.firstCandle = firstCandle;
             this.breakout = breakout;
@@ -559,6 +740,25 @@ public class IpoBacktestService {
         }
     }
 
+    /** NEW - carries the extra diagnostic fields the new rule computes. */
+    private static class WeeklyBreakoutResult {
+        final Candle breakoutCandle;
+        final int dailyBreakoutIndex;
+        final double risePercent;
+        final double highestHighLast10;
+
+        WeeklyBreakoutResult(Candle breakoutCandle, int dailyBreakoutIndex,
+                             double risePercent, double highestHighLast10) {
+            this.breakoutCandle = breakoutCandle;
+            this.dailyBreakoutIndex = dailyBreakoutIndex;
+            this.risePercent = risePercent;
+            this.highestHighLast10 = highestHighLast10;
+        }
+    }
+
+    /** NEW - pairs a weekly candle with its member daily candles, fixing the indexOf bug. */
+    private record WeeklyAggregate(Candle weeklyCandle, List<Candle> memberDailyCandles) { }
+
     private static class TradeResult {
         final IpoBacktestTrade.Outcome outcome;
         final double exitPrice;
@@ -569,11 +769,10 @@ public class IpoBacktestService {
         final String exitReason;
         final boolean slTrailedToBreakeven;
         final LocalDateTime trailTime;
-        final boolean bookedAtTarget1;
 
         TradeResult(IpoBacktestTrade.Outcome outcome, double exitPrice, double pnlPoints,
-                     double pnlPercent, double actualRR, LocalDateTime exitTime, String exitReason,
-                     boolean slTrailedToBreakeven, LocalDateTime trailTime) {
+                    double pnlPercent, double actualRR, LocalDateTime exitTime, String exitReason,
+                    boolean slTrailedToBreakeven, LocalDateTime trailTime) {
             this.outcome = outcome;
             this.exitPrice = exitPrice;
             this.pnlPoints = pnlPoints;
@@ -583,7 +782,6 @@ public class IpoBacktestService {
             this.exitReason = exitReason;
             this.slTrailedToBreakeven = slTrailedToBreakeven;
             this.trailTime = trailTime;
-            this.bookedAtTarget1 = slTrailedToBreakeven;
         }
     }
 

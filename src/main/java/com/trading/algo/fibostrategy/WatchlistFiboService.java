@@ -147,17 +147,17 @@ public class WatchlistFiboService {
             }
 
             // Run the strategy logic
-            Optional<BacktestTrade> trade = strategy.evaluate(symbol, today, candles);
+            List<BacktestTrade> trades = strategy.evaluate(symbol, today, candles);
 
-            if (trade.isPresent()) {
-                signals.add(trade.get());
+            trades.forEach(t -> {
+                signals.add(t);
                 log.info("  🔔 WATCHLIST FIBO SIGNAL: {} {} Entry={} SL={} Target={}",
                         symbol,
-                        trade.get().getDirection(),
-                        String.format("%.2f", trade.get().getEntryPrice()),
-                        String.format("%.2f", trade.get().getStopLoss()),
-                        String.format("%.2f", trade.get().getTarget()));
-            }
+                        t.getDirection(),
+                        String.format("%.2f", t.getEntryPrice()),
+                        String.format("%.2f", t.getStopLoss()),
+                        String.format("%.2f", t.getTarget()));
+            });
 
         } catch (Exception e) {
             log.error("Watchlist Fibo scan error for {}: {}", symbol, e.getMessage());

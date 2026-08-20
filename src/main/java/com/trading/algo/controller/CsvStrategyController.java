@@ -360,18 +360,18 @@ public class CsvStrategyController {
                 .max(Comparator.comparing(Candle::getTimestamp))
                 .orElse(null);
 
-            Optional<BacktestTrade> trade = fibonacciStrategy.evaluate(symbol, date, candles,
+            List<BacktestTrade> trades = fibonacciStrategy.evaluate(symbol, date, candles,
                 -1.0, 0.0, 0, config.getFixedRiskRupees(),
                 previousDay == null ? null : previousDay.getOpen(),
                 previousDay == null ? null : previousDay.getHigh(),
                 previousDay == null ? null : previousDay.getLow(),
                 previousDay == null ? null : previousDay.getClose(),
                 0.0, 0.0, 0.0, 0.0, c1Time, c2Time, null);
-            if (trade.isPresent()) {
-                signals.add(trade.get());
-                log.info("Fibonacci signal ({}): {} {}", 
-                    (c2Time.equals(C2_TIME_15M) ? "15m" : "5m"), symbol, trade.get().getDirection());
-            }
+            trades.forEach(t -> {
+                signals.add(t);
+                log.info("Fibonacci signal ({}): {} {}",
+                        (c2Time.equals(C2_TIME_15M) ? "15m" : "5m"), symbol, t.getDirection());
+            });
 
         } catch (Exception e) {
             log.error("Fibonacci scan error for {}: {}", symbol, e.getMessage());

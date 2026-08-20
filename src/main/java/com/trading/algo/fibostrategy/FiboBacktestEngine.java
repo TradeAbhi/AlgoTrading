@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -76,6 +77,7 @@ public class FiboBacktestEngine {
         double originalMinC1AtrRatio = config.getMinC1AtrRatio();
         double originalMinC1VolumeMultiplier = config.getMinC1VolumeMultiplier();
         double originalSlMarginPercent = config.getSlMarginPercent();
+        int originalTimeBasedSlTrailCandles = config.getTimeBasedSlTrailCandles();
 
         if (combo != null) {
             config.setMinWickRatio(combo.minWickRatio);
@@ -84,6 +86,7 @@ public class FiboBacktestEngine {
             config.setMinC1AtrRatio(combo.minC1AtrRatio);
             config.setMinC1VolumeMultiplier(combo.minC1VolumeMultiplier);
             config.setSlMarginPercent(combo.slMarginPercent);
+            config.setTimeBasedSlTrailCandles(combo.timeBasedSlTrailCandles);
         }
 
         try {
@@ -95,14 +98,19 @@ public class FiboBacktestEngine {
                         List<Candle> candles = candleService.fetchDayCandles(instrumentKey, day);
 
                         if (candles != null && candles.size() >= 3) {
-                            Optional<BacktestTrade> trade = strategy.evaluate(symbol, day, candles);
-                            trade.ifPresent(t -> {
+                            PreviousDayOhlc previousDay = fetchPreviousDayOhlc(instrumentKey, day);
+                            List<BacktestTrade> dayTrades = strategy.evaluate(symbol, day, candles,
+                                    -1.0, 0.0, 0, config.getFixedRiskRupees(),
+                                    previousDay.open(), previousDay.high(), previousDay.low(), previousDay.close(),
+                                    0.0, 0.0, 0.0, 0.0);
+                            dayTrades.forEach(t -> {
                                 trades.add(t);
-                                log.info("Trade found: {} {} {} Entry={} SL={} Target={}",
+                                log.info("Trade found: {} {} {} Entry={} SL={} Target={} reEntry={}",
                                         symbol, currentDay, t.getDirection(),
                                         String.format("%.2f", t.getEntryPrice()),
                                         String.format("%.2f", t.getStopLoss()),
-                                        String.format("%.2f", t.getTarget()));
+                                        String.format("%.2f", t.getTarget()),
+                                        t.getReEntrySequence());
                             });
                         }
                     } catch (Exception e) {
@@ -119,6 +127,7 @@ public class FiboBacktestEngine {
                 config.setMinC1AtrRatio(originalMinC1AtrRatio);
                 config.setMinC1VolumeMultiplier(originalMinC1VolumeMultiplier);
                 config.setSlMarginPercent(originalSlMarginPercent);
+                config.setTimeBasedSlTrailCandles(originalTimeBasedSlTrailCandles);
             }
         }
 
@@ -157,6 +166,39 @@ public class FiboBacktestEngine {
         }
 
         return results;
+    }
+
+    /** Fetches the most recent completed trading day's OHLC for categorization. */
+    private PreviousDayOhlc fetchPreviousDayOhlc(String instrumentKey, LocalDate date) {
+        LocalDate candidate = date.minusDays(1);
+        // Try up to ten calendar days to safely pass weekends and market holidays.
+        for (int attempts = 0; attempts < 10; attempts++, candidate = candidate.minusDays(1)) {
+            if (candidate.getDayOfWeek() == DayOfWeek.SATURDAY || candidate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                continue;
+            }
+            try {
+                List<Candle> candles = candleService.fetchDayCandles(instrumentKey, candidate);
+                if (candles == null || candles.isEmpty()) {
+                    continue;
+                }
+                Candle first = candles.stream().min(Comparator.comparing(Candle::getTimestamp)).orElseThrow();
+                Candle last = candles.stream().max(Comparator.comparing(Candle::getTimestamp)).orElseThrow();
+                return new PreviousDayOhlc(first.getOpen(),
+                        candles.stream().mapToDouble(Candle::getHigh).max().orElse(first.getHigh()),
+                        candles.stream().mapToDouble(Candle::getLow).min().orElse(first.getLow()),
+                        last.getClose());
+            } catch (Exception e) {
+                log.debug("Could not fetch previous-day OHLC for {} on {}: {}", instrumentKey, candidate, e.getMessage());
+            }
+        }
+        log.warn("Previous-day OHLC unavailable for {} before {}", instrumentKey, date);
+        return PreviousDayOhlc.empty();
+    }
+
+    private record PreviousDayOhlc(Double open, Double high, Double low, Double close) {
+        private static PreviousDayOhlc empty() {
+            return new PreviousDayOhlc(null, null, null, null);
+        }
     }
 
     /**
@@ -217,6 +259,11 @@ public class FiboBacktestEngine {
             return trades.stream()
                     .mapToDouble(BacktestTrade::getPnlRupees)
                     .sum();
+        }
+
+        /** Profitability split by previous-day high/low category. */
+        public Map<FiboPreviousDayCategory, FiboCategoryPerformance> getCategoryPerformance() {
+            return FiboCategoryPerformance.summarize(trades);
         }
     }
 }

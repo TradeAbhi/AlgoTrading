@@ -36,7 +36,7 @@ public class WatchlistTelegramAlertService {
     // Scheduled: every 15 min during market hours (auto)
     // -------------------------------------------------------------------------
 
-    @Scheduled(cron = "0 15/15 9-15 * * MON-FRI", zone = "Asia/Kolkata")
+    // @Scheduled(cron = "0 15/15 9-15 * * MON-FRI", zone = "Asia/Kolkata")
     public void scheduledDigest() {
         LocalTime now = LocalTime.now();
         if (now.isBefore(MARKET_OPEN) || now.isAfter(MARKET_CLOSE)) {

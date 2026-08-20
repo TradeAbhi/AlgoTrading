@@ -101,11 +101,10 @@ public class IndexBacktestService {
                 Double prevDayOpen = prevDayOhlc != null ? prevDayOhlc.get("open") : null;
 
                 // Reuse the same strategy service — same rules apply to indexes
-                Optional<com.trading.algo.entity.BacktestTrade> result =
+                List<com.trading.algo.entity.BacktestTrade> results =
                         strategy.evaluate(indexName.name(), date, candles, -1.0, 0.0, 0, config.getFixedRiskRupees(), prevDayOpen, prevDayHigh, prevDayLow, prevDayClose, 0.0, 0.0, 0.0, 0.0);
 
-                if (result.isPresent()) {
-                    com.trading.algo.entity.BacktestTrade t = result.get();
+                for (com.trading.algo.entity.BacktestTrade t : results) {
                     IndexBacktestTrade trade = IndexBacktestTrade.builder()
                             .indexName(indexName)
                             .tradeDate(date)

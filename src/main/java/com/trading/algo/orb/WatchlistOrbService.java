@@ -128,7 +128,10 @@ public class WatchlistOrbService {
                     continue;
                 }
 
-                double prevClose = fetchPrevDayClose(symbol, instrumentKey);
+                PrevDayOhlc prevDayOhlc = fetchPrevDayOhlc(symbol, instrumentKey);
+                double prevDayClose = prevDayOhlc != null ? prevDayOhlc.close : 0;
+                double prevDayHigh = prevDayOhlc != null ? prevDayOhlc.high : 0;
+                double prevDayLow = prevDayOhlc != null ? prevDayOhlc.low : 0;
 
                 OrbSymbolState state = OrbSymbolState.builder()
                         .symbol(symbol)
@@ -141,7 +144,9 @@ public class WatchlistOrbService {
                         .prevCandleLow(candle.getLow())
                         .openingCandleVolume(candle.getVolume())
                         .openPrice(candle.getOpen())
-                        .prevDayClose(prevClose)
+                        .prevDayClose(prevDayClose)
+                        .prevDayHigh(prevDayHigh)
+                        .prevDayLow(prevDayLow)
                         .build();
 
                 watchlistStateMap.put(symbol, state);
@@ -184,7 +189,9 @@ public class WatchlistOrbService {
                             log.debug("Watchlist ORB: {} BUY skipped - low volume", symbol);
                         } else {
                             state.setRollingLow(state.getPrevCandleLow());
-                            sendBuyAlert(state, candle);
+                            // Categorize: above prev day high = gap-up BUY, below = regular BUY
+                            boolean abovePrevHigh = state.getPrevDayHigh() > 0 && close > state.getPrevDayHigh();
+                            sendBuyAlert(state, candle, abovePrevHigh);
                             state.setBuyAlerted(true);
                             buyFired++;
                         }
@@ -201,7 +208,9 @@ public class WatchlistOrbService {
                             log.debug("Watchlist ORB: {} SELL skipped - low volume", symbol);
                         } else {
                             state.setRollingHigh(state.getPrevCandleHigh());
-                            sendSellAlert(state, candle);
+                            // Categorize: below prev day low = gap-down SELL, above = regular SELL
+                            boolean belowPrevLow = state.getPrevDayLow() > 0 && close < state.getPrevDayLow();
+                            sendSellAlert(state, candle, belowPrevLow);
                             state.setSellAlerted(true);
                             sellFired++;
                         }
@@ -251,9 +260,9 @@ public class WatchlistOrbService {
     }
 
     /**
-     * Fetch previous day's close price
+     * Fetch previous day's OHLC data
      */
-    private double fetchPrevDayClose(String symbol, String instrumentKey) {
+    private PrevDayOhlc fetchPrevDayOhlc(String symbol, String instrumentKey) {
         try {
             LocalDate today = LocalDate.now();
             LocalDate fromDate = today.minusDays(5);
@@ -261,21 +270,37 @@ public class WatchlistOrbService {
             List<com.trading.algo.dtos.Candle> candles = candleService.fetchDailyCandles(
                     instrumentKey, fromDate, today);
             
-            if (candles == null || candles.isEmpty()) return 0;
+            if (candles == null || candles.isEmpty()) return null;
             
             // Get the most recent completed trading day (last in the list)
-            return candles.get(candles.size() - 1).getClose();
+            com.trading.algo.dtos.Candle prevDayCandle = candles.get(candles.size() - 1);
+            return new PrevDayOhlc(prevDayCandle.getOpen(), prevDayCandle.getHigh(), 
+                                   prevDayCandle.getLow(), prevDayCandle.getClose());
 
         } catch (Exception e) {
-            log.warn("Watchlist ORB fetch prev close failed for {}: {}", symbol, e.getMessage());
-            return 0;
+            log.warn("Watchlist ORB fetch prev day OHLC failed for {}: {}", symbol, e.getMessage());
+            return null;
+        }
+    }
+
+    private static class PrevDayOhlc {
+        final double open;
+        final double high;
+        final double low;
+        final double close;
+
+        PrevDayOhlc(double open, double high, double low, double close) {
+            this.open = open;
+            this.high = high;
+            this.low = low;
+            this.close = close;
         }
     }
 
     /**
      * Send BUY alert to Telegram
      */
-    private void sendBuyAlert(OrbSymbolState state, OrbCandle candle) {
+    private void sendBuyAlert(OrbSymbolState state, OrbCandle candle, boolean abovePrevHigh) {
         double close = candle.getClose();
         double slLevel = state.getPrevCandleLow();
         double riskPct = ((close - slLevel) / close) * 100.0;
@@ -287,8 +312,11 @@ public class WatchlistOrbService {
                 ? String.format("%s%.2f%%", gapPct >= 0 ? "+" : "", gapPct)
                 : "N/A";
 
+        // Category label
+        String categoryLabel = abovePrevHigh ? "🟢 *Gap Up BUY*" : "🟢 *BUY*";
+
         String message = String.format(
-                "🟢 *WATCHLIST ORB BUY*%n" +
+                "%s%n" +
                 "📌 *%s*%n" +
                 "────────────────%n" +
                 "📈 Close:        ₹%.2f%n" +
@@ -299,6 +327,7 @@ public class WatchlistOrbService {
                 "📅 Prev close:   ₹%.2f%n" +
                 "🕐 Candle:       %s%n" +
                 "📊 Volume:       %,d%n",
+                categoryLabel,
                 state.getSymbol(),
                 close,
                 state.getRollingHigh(),
@@ -311,13 +340,13 @@ public class WatchlistOrbService {
         );
 
         telegramService.sendMessage(message);
-        log.info("Watchlist ORB BUY alert sent for {}", state.getSymbol());
+        log.info("Watchlist ORB BUY alert sent for {} (abovePrevHigh={})", state.getSymbol(), abovePrevHigh);
     }
 
     /**
      * Send SELL alert to Telegram
      */
-    private void sendSellAlert(OrbSymbolState state, OrbCandle candle) {
+    private void sendSellAlert(OrbSymbolState state, OrbCandle candle, boolean belowPrevLow) {
         double close = candle.getClose();
         double slLevel = state.getPrevCandleHigh();
         double riskPct = ((slLevel - close) / close) * 100.0;
@@ -329,8 +358,11 @@ public class WatchlistOrbService {
                 ? String.format("%s%.2f%%", gapPct >= 0 ? "+" : "", gapPct)
                 : "N/A";
 
+        // Category label
+        String categoryLabel = belowPrevLow ? "🔴 *Gap Down SELL*" : "🔴 *SELL*";
+
         String message = String.format(
-                "🔴 *WATCHLIST ORB SELL*%n" +
+                "%s%n" +
                 "📌 *%s*%n" +
                 "────────────────%n" +
                 "📉 Close:        ₹%.2f%n" +
@@ -341,6 +373,7 @@ public class WatchlistOrbService {
                 "📅 Prev close:   ₹%.2f%n" +
                 "🕐 Candle:       %s%n" +
                 "📊 Volume:       %,d%n",
+                categoryLabel,
                 state.getSymbol(),
                 close,
                 state.getRollingLow(),
@@ -353,7 +386,7 @@ public class WatchlistOrbService {
         );
 
         telegramService.sendMessage(message);
-        log.info("Watchlist ORB SELL alert sent for {}", state.getSymbol());
+        log.info("Watchlist ORB SELL alert sent for {} (belowPrevLow={})", state.getSymbol(), belowPrevLow);
     }
 
     private String candlePeriod(LocalTime candleOpen) {

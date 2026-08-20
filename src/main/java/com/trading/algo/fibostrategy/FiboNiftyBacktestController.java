@@ -58,6 +58,19 @@ public class FiboNiftyBacktestController {
         return ResponseEntity.ok(results);
     }
 
+    /** Combined top-10 Nifty profitability split by previous-day-level category. */
+    @GetMapping("/category-summary")
+    public ResponseEntity<?> categorySummary(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        Map<String, FiboBacktestEngine.FiboBacktestResult> results =
+                backtestEngine.runBacktest(TOP_10_NIFTY, from, to);
+        List<com.trading.algo.entity.BacktestTrade> trades = results.values().stream()
+                .flatMap(result -> result.getTrades().stream())
+                .toList();
+        return ResponseEntity.ok(FiboCategoryPerformance.summarize(trades));
+    }
+
     @GetMapping("/nifty-dynamic-check")
     public ResponseEntity<?> niftyOptimize(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -97,5 +110,16 @@ public class FiboNiftyBacktestController {
                 sweepEngine.toSummary(results.getResults(), topN);
 
         return ResponseEntity.ok(summary);
+    }
+
+    /** Parameter-sweep rankings for one selected category in the top-10 Nifty universe. */
+    @GetMapping("/dynamic-check-category-summary")
+    public ResponseEntity<?> optimizeCategorySummary(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam FiboPreviousDayCategory category,
+            @RequestParam(defaultValue = "50") int topN) {
+        FiboParameterSweepEngine.SweepResult results = sweepEngine.runSweep(TOP_10_NIFTY, from, to);
+        return ResponseEntity.ok(sweepEngine.toCategorySummary(results.getResults(), category, topN));
     }
 }

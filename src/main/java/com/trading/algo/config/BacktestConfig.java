@@ -83,6 +83,12 @@ public class BacktestConfig {
     /** % of position to close at partialExitRR. Default 50 = close half */
     private double partialExitQtyPct = 50.0;
 
+    /** Start trailing after this many completed 15-minute candles following C2. */
+    private int timeBasedSlTrailCandles = 10;
+
+    /** Trail buffer from the best price seen after entry, expressed as a percent. */
+    private double timeBasedSlTrailMarginPercent = 0.25;
+
     /**
      * Maximum losses allowed per day across all symbols.
      * Once this many SL_HIT outcomes occur on a given date, skip remaining symbols.
